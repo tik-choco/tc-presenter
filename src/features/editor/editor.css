@@ -1,0 +1,483 @@
+/* Editor tab — plain CSS, tokens.css custom properties only. Class prefix
+   `edt-` to avoid collisions with other features' stylesheets. */
+
+.edt-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 20px;
+  max-width: 1080px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.edt-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-1);
+  padding: 18px 20px;
+}
+
+.edt-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.edt-panel__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.edt-panel__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.edt-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-m);
+}
+
+.edt-deck-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.edt-deck-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+}
+
+.edt-deck-item__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.edt-deck-item__title {
+  font-weight: 600;
+  color: var(--text-strong);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edt-deck-item__meta {
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+
+.edt-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+
+.edt-btn:hover {
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+}
+
+.edt-btn--primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+.edt-btn--primary:hover {
+  background: var(--primary-hover);
+}
+
+.edt-btn--danger:hover {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+
+.edt-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.edt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.edt-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.edt-field input:not([type='checkbox']),
+.edt-field select,
+.edt-field textarea {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--page);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.edt-field input:not([type='checkbox']):focus-visible,
+.edt-field select:focus-visible,
+.edt-field textarea:focus-visible {
+  border-color: var(--focus);
+}
+
+.edt-field input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+.edt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.edt-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: 8px;
+  margin-bottom: 12px;
+}
+
+.edt-source-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+}
+
+.edt-source-item:hover {
+  background: var(--surface-3);
+}
+
+.edt-advanced-toggle {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 0;
+  margin-bottom: 8px;
+}
+
+.edt-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 10px;
+}
+
+.edt-progress__spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--primary);
+  animation: edt-spin 0.8s linear infinite;
+}
+
+@keyframes edt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.edt-error {
+  font-size: 13px;
+  color: var(--danger-text);
+  margin-top: 10px;
+}
+
+.edt-score {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.edt-score__total {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.edt-score__gate {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+}
+
+.edt-score__gate--pass {
+  background: rgba(21, 128, 61, 0.14);
+  color: var(--success-text);
+}
+
+.edt-score__gate--fail {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+
+.edt-score__metrics {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.edt-score__metric {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.edt-score__metric-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.edt-score__metric-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  border-radius: var(--radius-pill);
+}
+
+.edt-score__metric-label {
+  width: 190px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edt-score__metric-reason {
+  color: var(--text-subtle);
+  font-size: 11px;
+}
+
+.edt-deck-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.edt-deck-meta .edt-field {
+  flex: 1;
+  min-width: 200px;
+  margin-bottom: 0;
+}
+
+.edt-present-hint {
+  font-size: 12px;
+  color: var(--success-text);
+  margin-top: 6px;
+}
+
+.edt-slide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.edt-slide {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: 14px;
+  background: var(--surface-2);
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.edt-slide__preview {
+  flex-shrink: 0;
+  border-radius: var(--radius-s);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+}
+
+.edt-slide__preview-unavailable {
+  width: 220px;
+  height: 124px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-subtle);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-s);
+  padding: 8px;
+}
+
+.edt-slide__fields {
+  flex: 1;
+  min-width: 280px;
+}
+
+.edt-slide__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.edt-slide__index {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-subtle);
+}
+
+.edt-bullet-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.edt-bullet-row input[type='text'] {
+  flex: 1;
+}
+
+.edt-bullet-row input[type='number'] {
+  width: 56px;
+}
+
+.edt-bullet-row select {
+  width: 130px;
+}
+
+/* ============================================================
+   Live generation preview — read-only skeleton list of the deck
+   currently being generated (GenerateProgressEvent.partialDeck).
+   Pending rows are placeholders that fill in as each segment's
+   slide commits.
+   ============================================================ */
+
+.edt-live-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.edt-live-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.edt-live-slide {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  animation: edt-live-in 0.25s var(--ease-out);
+}
+
+@keyframes edt-live-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.edt-live-slide--pending {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+.edt-live-slide__num {
+  flex: none;
+  min-width: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-subtle);
+  text-align: right;
+}
+
+.edt-live-slide__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edt-live-slide__type {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-subtle);
+}
+
+.edt-live-slide__badge {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warning, var(--text-muted));
+}

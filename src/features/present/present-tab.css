@@ -1,0 +1,57 @@
+/* ============================================================
+   PresentTab — the pre/post-presentation state (the deck is
+   loaded but the fullscreen PresentPlayer isn't mounted, e.g.
+   right after the user hits Exit). Builds on tokens.css.
+   ============================================================ */
+
+.present-tab__empty {
+  text-align: center;
+}
+
+.present-tab__ready {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.present-tab__ready-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+
+.present-tab__ready-meta {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.present-tab__start {
+  appearance: none;
+  border: none;
+  background: var(--primary);
+  color: var(--on-primary);
+  padding: 12px 28px;
+  border-radius: var(--radius-pill);
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: var(--shadow-2);
+  transition: background-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.present-tab__start:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+/* Presenter-character panel (vrm/CharacterManager.tsx), stacked below either
+   pre-presentation screen — see present-tab.css's file header. */
+.present-tab__empty + .character-manager,
+.present-tab__ready + .character-manager {
+  margin: 0 24px 24px;
+}

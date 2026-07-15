@@ -1,0 +1,202 @@
+/* CharacterManager — Presenter character section shown in PresentTab's
+   pre-presentation screens. Mirrors features/settings/settings.css's
+   `.set-panel` look (plain CSS, tokens.css custom properties only). Class
+   prefix `character-manager` to avoid collisions with other features'
+   stylesheets. */
+
+.character-manager {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-1);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+}
+
+.character-manager__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.character-manager__hint {
+  margin: -6px 0 0;
+  font-size: 12px;
+  color: var(--text-subtle);
+  line-height: 1.5;
+}
+
+.character-manager__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.character-manager__row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.character-manager__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex: 1 1 140px;
+}
+
+.character-manager__field select {
+  padding: 6px 8px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.character-manager__preview {
+  width: 100%;
+  height: 220px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.character-manager__btn {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  padding: 8px 16px;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-strong);
+  transition: background-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.character-manager__btn:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.character-manager__btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.character-manager__btn--primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+.character-manager__btn--primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.character-manager__hidden-input {
+  display: none;
+}
+
+.character-manager__error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger-text);
+}
+
+.character-manager__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+
+.character-manager__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.character-manager__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.character-manager__item-select {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: var(--radius-s);
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.character-manager__item-select:hover {
+  background: var(--surface-2);
+}
+
+.character-manager__item-select--active {
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+  color: var(--text-strong);
+}
+
+.character-manager__item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.character-manager__item-size {
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+  flex: none;
+}
+
+.character-manager__item-remove {
+  appearance: none;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-subtle);
+  padding: 6px;
+  border-radius: var(--radius-s);
+  line-height: 0;
+  flex: none;
+}
+
+.character-manager__item-remove:hover:not(:disabled) {
+  color: var(--danger-text);
+  background: var(--danger-soft);
+}
+
+.character-manager__item-remove:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

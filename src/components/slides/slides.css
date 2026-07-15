@@ -1,0 +1,1157 @@
+/* ============================================================
+   Slide renderer — "sample PDF" styled visual language
+   ------------------------------------------------------------
+   See notes-slide-quality.md §2: wine-red/navy layered accent
+   colors, pill-shaped boxes, low-text-count big typography,
+   small bottom citation, footer page number, 16:9 canvas.
+
+   Per-slide colors come from Deck.theme.colorPalette, wired in
+   by SlideView.tsx as --slide-* custom properties on
+   .slide-canvas; every rule below falls back to the app's own
+   tokens.css variables so a slide still looks correct even if
+   a theme field is missing.
+   ============================================================ */
+
+.slide-scale-wrap {
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.slide-canvas {
+  position: relative;
+  overflow: hidden;
+  background: var(--slide-bg, var(--surface));
+  color: var(--slide-text, var(--text));
+  font-family: var(--slide-font, var(--sans));
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-3);
+  display: flex;
+  flex-direction: column;
+  padding: 56px 64px 48px;
+}
+
+/* ---- Badge (①②③ layer indicator) --------------------------------- */
+/* Inline within .slide-header, immediately before the title text (design-
+   spec.md §1.5 / R2-R3): the reference deck never floats the badge above the
+   title, and every badge circle is the same wine-red regardless of layer. */
+
+.slide-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.slide-badge__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--slide-primary, var(--primary));
+  color: #fff;
+  font-weight: 800;
+  font-size: 19px;
+}
+
+.slide-badge__label {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--slide-primary, var(--primary));
+  letter-spacing: 0.01em;
+}
+
+/* Not present in the reference deck (design-spec.md §2-H / R10) — kept only
+   as a low-key editor/present affordance, styled small and out of the way
+   of the title row so it never reads as part of the reference design. */
+.slide-build-pill {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  padding: 3px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.75;
+  z-index: 2;
+}
+
+/* ---- Standard (non-hero) header ------------------------------------ */
+
+.slide-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 40px;
+  margin-bottom: 28px;
+  padding-top: 4px;
+}
+
+.slide-title {
+  font-size: 46px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--slide-text, var(--text-strong));
+}
+
+/* ---- Content area ---------------------------------------------------- */
+
+.slide-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.slide-content[data-layout='two_column_text_diagram'] {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 40px;
+}
+
+.slide-content[data-layout='two_column_text_diagram'] .slide-content__text-pane {
+  flex: 0 0 42%;
+}
+
+.slide-content[data-layout='two_column_text_diagram'] .slide-content__visual-pane {
+  flex: 1;
+}
+
+.slide-content[data-layout='diagram_centered'] .slide-content__visual-pane {
+  flex: 1;
+}
+
+.slide-content[data-layout='grid'] .slide-bullet-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 32px;
+}
+
+.slide-content__text-pane {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.slide-content__visual-pane {
+  position: relative;
+  min-width: 0;
+  min-height: 220px;
+}
+
+.slide-content__visual-pane--main {
+  flex: 1;
+}
+
+.slide-content__caption {
+  flex: 0 0 auto;
+}
+
+/* ---- Paragraphs / bullets -------------------------------------------- */
+
+.slide-paragraph {
+  font-size: 26px;
+  line-height: 1.55;
+  color: var(--slide-text, var(--text));
+}
+
+.slide-bullet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.slide-bullet {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding-left: calc(var(--indent, 0) * 28px);
+  font-size: calc(30px - var(--indent, 0) * 4px);
+  line-height: 1.5;
+  color: var(--slide-text, var(--text));
+}
+
+.slide-bullet__marker {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin-top: 0.5em;
+  border-radius: 50%;
+  background: var(--slide-primary, var(--primary));
+}
+
+.slide-bullet[data-form='verb_phrase'] .slide-bullet__marker {
+  border-radius: 3px;
+  background: var(--slide-secondary, var(--secondary));
+}
+
+.slide-bullet[style*='--indent: 1'] .slide-bullet__marker,
+.slide-bullet[style*='--indent:1'] .slide-bullet__marker {
+  background: var(--slide-secondary, var(--secondary));
+  width: 9px;
+  height: 9px;
+}
+
+.slide-bullet__text {
+  flex: 1;
+}
+
+/* ---- Agenda (mindmap-ish pill trail) ---------------------------------- */
+
+.slide-agenda {
+  list-style: none;
+  margin: auto 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 4px;
+}
+
+.slide-agenda__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 26px;
+  border-radius: var(--radius-pill);
+  background: var(--secondary-soft);
+  border: 1px solid var(--slide-secondary, var(--secondary-border));
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--slide-secondary, var(--secondary));
+}
+
+.slide-agenda__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--slide-primary, var(--primary));
+  color: #fff;
+  font-size: 16px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.slide-agenda__chevron {
+  color: var(--slide-gray, var(--neutral-gray));
+  flex-shrink: 0;
+}
+
+/* ---- Summary recap list ------------------------------------------------ */
+
+.slide-recap {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.slide-recap__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--slide-text, var(--text));
+}
+
+.slide-recap__check {
+  flex: 0 0 auto;
+  margin-top: 4px;
+  color: var(--slide-primary, var(--primary));
+}
+
+/* ---- Quote -------------------------------------------------------------- */
+
+.slide-quote {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+  padding: 0 40px;
+}
+
+.slide-quote__mark {
+  color: var(--slide-primary, var(--primary));
+  opacity: 0.55;
+}
+
+.slide-quote__text {
+  font-size: 38px;
+  font-style: italic;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--slide-text, var(--text-strong));
+  max-width: 900px;
+}
+
+/* ---- Hero (title / section_break) --------------------------------------- */
+
+/* Flat wine-red fill, left-aligned, vertically centered-to-slightly-above —
+   design-spec.md §1.6 / R1: the reference cover is a solid color fill, never
+   a gradient, and text is left-aligned rather than centered. */
+.slide-hero {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  text-align: left;
+  gap: 18px;
+  margin: -56px -64px -48px;
+  padding: 56px 88px;
+  padding-bottom: 96px;
+  background: var(--slide-primary, var(--primary));
+  color: #fff;
+}
+
+.slide-hero__eyebrow {
+  display: inline-flex;
+  padding: 6px 18px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.slide-hero__title {
+  font-size: 68px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  max-width: 980px;
+}
+
+.slide-hero__subtitle {
+  font-size: 27px;
+  font-weight: 500;
+  opacity: 0.92;
+  max-width: 820px;
+  margin-top: 10px;
+}
+
+.slide-hero__tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.slide-hero__tag {
+  padding: 6px 16px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ---- Diagram (pill-node mindmap) ----------------------------------------- */
+
+.slide-diagram {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 260px;
+}
+
+.slide-diagram__edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.slide-diagram__edge {
+  stroke: var(--slide-gray, var(--neutral-gray));
+}
+
+.slide-diagram__arrowhead {
+  fill: var(--slide-gray, var(--neutral-gray));
+}
+
+.slide-diagram__node {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  border: 2px solid var(--slide-secondary, var(--secondary-border));
+  color: var(--slide-text, var(--text));
+  font-size: 17px;
+  font-weight: 700;
+  text-align: center;
+  box-shadow: var(--shadow-1);
+  transform: translate(0, 0);
+}
+
+.slide-diagram[data-kind='network_graph'] .slide-diagram__node {
+  border-radius: 50%;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  font-size: 13px;
+}
+
+.slide-diagram__node--icon {
+  background: var(--primary-soft);
+}
+
+.slide-diagram__icon {
+  flex-shrink: 0;
+}
+
+.slide-diagram__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Data table ------------------------------------------------------------ */
+
+.slide-table-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  overflow: auto;
+}
+
+.slide-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 20px;
+}
+
+.slide-table th,
+.slide-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.slide-table th {
+  background: var(--secondary-soft);
+  color: var(--slide-secondary, var(--secondary));
+  font-weight: 800;
+}
+
+.slide-table tbody tr:nth-child(even) {
+  background: var(--surface-2);
+}
+
+.slide-table__meta {
+  align-self: flex-end;
+  display: flex;
+  gap: 14px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+/* ---- Chart ------------------------------------------------------------------ */
+
+.slide-chart {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.slide-chart__plot {
+  flex: 1;
+  width: 100%;
+  min-height: 200px;
+  background: var(--surface-2);
+  border-radius: var(--radius-m);
+  overflow: visible;
+}
+
+.slide-chart__axis {
+  stroke: var(--border-strong);
+  stroke-width: 0.5;
+}
+
+.slide-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.slide-chart__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  color: var(--text-muted);
+}
+
+.slide-chart__legend-item i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.slide-chart__labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+
+.slide-chart__annotation {
+  padding: 10px 16px;
+  border-radius: var(--radius-m);
+  background: var(--primary-soft);
+  color: var(--slide-primary, var(--primary));
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* ---- Citation / footer -------------------------------------------------------- */
+
+.slide-citation {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--text-subtle);
+  text-align: right;
+}
+
+.slide-citation a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* Full-width hairline + right-aligned page number — design-spec.md §1.4 /
+   R5. Absent on hero slides (HeroBody has no .slide-footer sibling rendered
+   under it in practice — hero types don't show pagination in the reference
+   deck either). */
+.slide-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 10px 24px;
+  border-top: 1px solid color-mix(in srgb, var(--slide-gray, var(--neutral-gray)) 45%, transparent);
+}
+
+.slide-footer__page {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--slide-gray, var(--text-subtle));
+}
+
+/* ============================================================
+   Block content model (Slide.blocks) — design-spec.md §2/§3.
+   Rendered by src/components/slides/Blocks.tsx. One section per
+   ContentBlock['kind'], all keyed off the same --slide-* custom
+   properties SlideView.tsx already wires from DeckTheme.
+   ============================================================ */
+
+.block-stack {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  overflow: hidden;
+}
+
+/* Content hugs the top of the slide, under the title, leaving whitespace
+   below (design-spec.md §1.3: "コンテンツ本体は画面上半分〜中央に集中させ、
+   下部に一定の空白を残す傾向") — deliberately NOT vertically centered in the
+   remaining canvas height, which is what the reference deck's pages (e.g.
+   p9, p15, p16) consistently look like. */
+.block-stack__full {
+  flex: 0 0 auto;
+}
+
+.block-stack__columns {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 40px;
+  align-items: flex-start;
+}
+
+.block-stack__column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Shared pill primitive — filled = brand-color fill/white text (conclusion),
+   outline = white fill/colored border+text (intermediate). Colors are set
+   inline per-item via pillStyle() in Blocks.tsx. */
+.block-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 22px;
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* ---- A. pillRow ------------------------------------------------------- */
+
+.block-pillrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 18px;
+}
+
+.block-pillrow[data-direction='vertical'] {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.block-pillrow__item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.block-pillrow__desc {
+  font-size: 18px;
+  color: var(--slide-text, var(--text));
+  opacity: 0.85;
+}
+
+/* ---- B. iconRow --------------------------------------------------------- */
+
+.block-iconrow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-around;
+  align-items: flex-start;
+  gap: 24px;
+  flex: 1;
+}
+
+.block-iconrow__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-width: 96px;
+}
+
+.block-iconrow__icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.block-iconrow__icon {
+  color: var(--slide-text, var(--text-strong));
+}
+
+.block-iconrow__item[data-excluded='true'] .block-iconrow__icon {
+  color: var(--slide-gray, var(--neutral-gray));
+  opacity: 0.6;
+}
+
+.block-iconrow__item[data-excluded='true'] .block-iconrow__label {
+  color: var(--slide-gray, var(--neutral-gray));
+}
+
+.block-iconrow__x {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--slide-warning, var(--danger));
+}
+
+.block-iconrow__label {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--slide-text, var(--text));
+  text-align: center;
+}
+
+/* ---- C. boxGroup (single / grid / nested) ------------------------------- */
+
+.block-boxgroup {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16px;
+}
+
+.block-boxgroup--single {
+  gap: 16px;
+}
+
+.block-box {
+  border-radius: var(--radius-m);
+  border: 2px solid var(--slide-primary, var(--primary));
+}
+
+.block-box--tab {
+  position: relative;
+  padding: 22px 24px 18px;
+  margin-top: 14px;
+}
+
+.block-box__tab-label {
+  position: absolute;
+  top: -16px;
+  left: 20px;
+  padding: 3px 14px;
+  border-radius: var(--radius-pill);
+  background: inherit;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.block-box--tab[data-variant='outline'] .block-box__tab-label {
+  background: var(--slide-bg, var(--surface));
+}
+
+.block-box__text {
+  margin: 4px 0 0;
+  font-size: 19px;
+  line-height: 1.5;
+}
+
+.block-boxgroup--grid-wrap {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 32px;
+}
+
+.block-boxgroup__grid {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  max-width: 780px;
+}
+
+.block-box--grid-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  border-color: var(--slide-gray, var(--border-strong));
+  background: var(--surface-2);
+}
+
+.block-box--grid-cell[data-empty='true'] {
+  border-style: dashed;
+  background: transparent;
+  opacity: 0.5;
+}
+
+.block-box--grid-cell .block-box__label {
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  padding: 0 4px;
+}
+
+.block-boxgroup--nested {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.block-box--nested {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 20px;
+  margin-left: calc(var(--nest-depth, 0) * 36px);
+  margin-top: -2px;
+  width: fit-content;
+}
+
+/* ---- D. mindmap ---------------------------------------------------------- */
+
+.block-mindmap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+}
+
+.block-mindmap__root {
+  flex: 0 0 auto;
+  padding: 16px 26px;
+  border-radius: var(--radius-m);
+  background: var(--slide-primary, var(--primary));
+  color: #fff;
+  font-size: 24px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.block-mindmap__branches {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.block-mindmap__branch {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  padding-left: calc(var(--depth, 0) * 0px);
+}
+
+.block-mindmap__branch[data-depth='0'] {
+  border-left: 2px solid var(--slide-gray, var(--border-strong));
+  padding-left: 18px;
+}
+
+.block-mindmap__node {
+  align-self: flex-start;
+}
+
+.block-mindmap__children {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-left: 24px;
+}
+
+.block-mindmap__children .block-mindmap__branch {
+  border-left: none;
+  padding-left: 0;
+}
+
+/* ---- F. flow --------------------------------------------------------------- */
+
+.block-flow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.block-flow[data-direction='vertical'] {
+  flex-direction: column;
+}
+
+.block-flow[data-direction='horizontal'] {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.block-flow__step-wrap {
+  display: flex;
+  align-items: center;
+}
+
+.block-flow[data-direction='vertical'] .block-flow__step-wrap {
+  flex-direction: column;
+}
+
+.block-flow__arrow {
+  flex: 0 0 auto;
+  display: block;
+}
+
+.block-flow[data-direction='vertical'] .block-flow__arrow {
+  width: 0;
+  height: 0;
+  margin: 2px 0;
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-top: 16px solid var(--slide-primary, var(--primary));
+}
+
+.block-flow[data-direction='horizontal'] .block-flow__arrow {
+  width: 0;
+  height: 0;
+  margin: 0 6px;
+  border-top: 12px solid transparent;
+  border-bottom: 12px solid transparent;
+  border-left: 16px solid var(--slide-primary, var(--primary));
+}
+
+.block-flow__step {
+  font-size: 22px;
+  padding: 14px 28px;
+}
+
+/* ---- G. comparison ----------------------------------------------------------- */
+
+.block-comparison {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0;
+}
+
+.block-comparison__side {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.block-comparison__side + .block-comparison__side {
+  border-left: 2px solid var(--slide-gray, var(--border-strong));
+}
+
+.block-comparison__heading {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--slide-primary, var(--primary));
+}
+
+.block-comparison__bullets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 19px;
+  line-height: 1.5;
+  color: var(--slide-text, var(--text));
+}
+
+.block-comparison__bullets li {
+  position: relative;
+  padding-left: 18px;
+}
+
+.block-comparison__bullets li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--slide-primary, var(--primary));
+}
+
+/* ---- Grid heatmap -------------------------------------------------------------- */
+
+.block-heatmap {
+  display: flex;
+  align-items: flex-start;
+  gap: 32px;
+}
+
+.block-heatmap__grid {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  max-width: 560px;
+}
+
+.block-heatmap__cell {
+  border-radius: var(--radius-xs);
+  aspect-ratio: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--slide-gray, var(--border-strong));
+}
+
+.block-heatmap__cell[data-empty='true'] {
+  background: transparent;
+  border-style: dashed;
+  opacity: 0.5;
+}
+
+.block-heatmap__side {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 260px;
+}
+
+.block-heatmap__annotation {
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--slide-text, var(--text-strong));
+}
+
+/* ---- Legend chips (shared by boxGroup grid + gridHeatmap) ---------------------- */
+
+.block-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.block-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  color: var(--slide-text, var(--text));
+}
+
+.block-legend__item i {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* ---- calloutBox ------------------------------------------------------------------ */
+
+.block-callout {
+  flex: 0 0 auto;
+  padding: 20px 26px;
+  border-radius: var(--radius-m);
+  border: 2px solid var(--slide-secondary, var(--secondary));
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.block-callout__heading {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 800;
+}
+
+.block-callout__bullets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 18px;
+  color: var(--slide-text, var(--text));
+}
+
+.block-callout__bullets li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* ---- paragraph / quote / imageRef ------------------------------------------------- */
+
+.block-paragraph {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.6;
+  color: var(--slide-text, var(--text));
+}
+
+.block-quote {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+  padding: 0 20px;
+}
+
+.block-quote__text {
+  margin: 0;
+  font-size: 32px;
+  font-style: italic;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--slide-text, var(--text-strong));
+}
+
+.block-quote__attribution {
+  margin: 0;
+  font-size: 17px;
+  color: var(--slide-gray, var(--text-muted));
+}
+
+.block-imageref {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.block-imageref__placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  border: 2px dashed var(--slide-gray, var(--border-strong));
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  color: var(--slide-gray, var(--text-muted));
+  font-size: 18px;
+  font-weight: 600;
+  text-align: center;
+  padding: 16px;
+}
+
+.block-imageref__source {
+  align-self: flex-end;
+  margin: 0;
+  font-size: 13px;
+  color: var(--slide-gray, var(--text-subtle));
+}
+
+.block-imageref__source a {
+  color: inherit;
+}
