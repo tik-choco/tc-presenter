@@ -36,6 +36,10 @@ import { loadNetworkEnabled, loadVisionPresetId, saveNetworkEnabled, saveVisionP
 const OLLAMA_BASE_URL = 'http://localhost:11434/v1'
 const LM_STUDIO_BASE_URL = 'http://localhost:1234/v1'
 
+/** 新規プリセット作成時の既定 reasoning_effort — 思考なしで応答を速くするため "none"。
+ * 空文字にすればパラメータ自体を送らない従来の挙動に戻せる(lib/llm.ts の apiConfig 参照)。 */
+const DEFAULT_REASONING_EFFORT = 'none'
+
 function cloneConfig(config: SharedLlmConfigV1): SharedLlmConfigV1 {
   return { ...config, providers: [...config.providers], presets: [...config.presets], network: { ...config.network } }
 }
@@ -220,7 +224,7 @@ function LlmSection({ config, onChange }: LlmSectionProps) {
   const [presetProviderId, setPresetProviderId] = useState('')
   const [presetModel, setPresetModel] = useState('')
   const [presetTemperature, setPresetTemperature] = useState('')
-  const [presetReasoningEffort, setPresetReasoningEffort] = useState('')
+  const [presetReasoningEffort, setPresetReasoningEffort] = useState(DEFAULT_REASONING_EFFORT)
 
   const presetProvider = config.providers.find((p) => p.id === presetProviderId)
 
@@ -263,7 +267,7 @@ function LlmSection({ config, onChange }: LlmSectionProps) {
     setPresetLabel('')
     setPresetModel('')
     setPresetTemperature('')
-    setPresetReasoningEffort('')
+    setPresetReasoningEffort(DEFAULT_REASONING_EFFORT)
   }
 
   function handleSetDefault(id: string) {
