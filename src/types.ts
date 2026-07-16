@@ -335,6 +335,16 @@ export interface ImageRefBlock {
   kind: 'imageRef'
   caption: string // required — what the image shows
   source?: SlideCitation // required whenever the image is external (matches existing citation rules)
+  /** Id into lib/imageStore.ts (IndexedDB-backed). When set, the renderer
+   * shows the stored image instead of the caption placeholder. Never a data
+   * URI — Deck JSON lives in localStorage and must stay small. */
+  assetId?: string
+  /** Vision-LLM-generated description of what the image shows — feeds the
+   * text-only LLM pipeline (generation/refine/evaluation) and doubles as the
+   * <img> alt text. */
+  description?: string
+  /** How the image fills its frame. Default 'contain'. */
+  fit?: 'contain' | 'cover'
 }
 
 /** Escape hatch: wraps the existing diagram/network-graph/flowchart/table/chart

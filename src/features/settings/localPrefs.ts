@@ -50,6 +50,66 @@ export function saveVisionPresetId(presetId: string): void {
   }
 }
 
+// Orchestrator/worker role defaults for the generate pipeline (types.ts's
+// GenerateOptions.presetId / workerPresetId / workerConcurrency). Like
+// visionPresetId above, this is purely "which of my already-configured
+// shared presets plays which role" — the presets themselves live in the
+// co-owned tc-shared-llm-config-v1 record. Set once in Settings; the
+// editor's generate form seeds its pickers from this so a run needs zero
+// per-run model configuration (and can still override per-run).
+const GENERATE_ROLES_KEY = 'tc-presenter:generate-roles'
+
+export interface GenerateRolePrefs {
+  /** Preset for the planning/orchestrator calls (script, evaluation, batch
+   * refine). "" = the shared config's defaultPresetId. */
+  orchestratorPresetId: string
+  /** Preset for the fan-out worker calls (per-segment slides, per-slide
+   * refine). "" = same as the orchestrator. */
+  workerPresetId: string
+  /** How many segment-slide workers run concurrently (1 = sequential).
+   * Clamped to generateDeck.ts's own 1..8 bound. */
+  workerConcurrency: number
+}
+
+export const DEFAULT_GENERATE_ROLE_PREFS: GenerateRolePrefs = {
+  orchestratorPresetId: '',
+  workerPresetId: '',
+  workerConcurrency: 1,
+}
+
+export function clampWorkerConcurrency(value: number): number {
+  if (!Number.isFinite(value)) return 1
+  return Math.max(1, Math.min(8, Math.trunc(value)))
+}
+
+export function loadGenerateRolePrefs(): GenerateRolePrefs {
+  try {
+    const raw = localStorage.getItem(GENERATE_ROLES_KEY)
+    if (!raw) return { ...DEFAULT_GENERATE_ROLE_PREFS }
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed === null || typeof parsed !== 'object') return { ...DEFAULT_GENERATE_ROLE_PREFS }
+    const record = parsed as Record<string, unknown>
+    return {
+      orchestratorPresetId: typeof record.orchestratorPresetId === 'string' ? record.orchestratorPresetId : '',
+      workerPresetId: typeof record.workerPresetId === 'string' ? record.workerPresetId : '',
+      workerConcurrency: clampWorkerConcurrency(typeof record.workerConcurrency === 'number' ? record.workerConcurrency : 1),
+    }
+  } catch {
+    return { ...DEFAULT_GENERATE_ROLE_PREFS }
+  }
+}
+
+export function saveGenerateRolePrefs(prefs: GenerateRolePrefs): void {
+  try {
+    localStorage.setItem(
+      GENERATE_ROLES_KEY,
+      JSON.stringify({ ...prefs, workerConcurrency: clampWorkerConcurrency(prefs.workerConcurrency) }),
+    )
+  } catch {
+    // best-effort persistence only
+  }
+}
+
 // PresentPlayer's speakerNotes caption overlay toggle (features/present/
 // PresentPlayer.tsx). Off by default — presenting already shows the slide
 // full-screen, so captions are an opt-in accessibility/reference aid.

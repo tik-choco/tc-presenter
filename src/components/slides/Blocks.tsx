@@ -10,6 +10,8 @@
 // literal hex (BlockColorRole is an indirection, see types.ts).
 import { Check, X as XIcon } from 'lucide-preact'
 import type { JSX } from 'preact'
+import { useEffect, useState } from 'preact/hooks'
+import { getCachedImageAsset, getImageAsset } from '../../lib/imageStore'
 import type {
   BlockColorRole,
   BoxGroupBlock,
@@ -46,7 +48,7 @@ function colorVar(role?: BlockColorRole): string {
 function pillStyle(variant: 'filled' | 'outline' | undefined, role: BlockColorRole | undefined): JSX.CSSProperties {
   const c = colorVar(role)
   if (variant === 'outline') {
-    return { color: c, borderColor: c, background: '#fff' }
+    return { color: c, borderColor: c, background: 'var(--slide-bg, #fff)' }
   }
   return { background: c, borderColor: c, color: '#fff' }
 }
@@ -219,13 +221,28 @@ function ComparisonView({ block }: { block: ComparisonBlock }) {
 
 // ---- F. flow --------------------------------------------------------------------
 
+/** Horizontal flow connectors render as a gently bowed curve + arrowhead
+ * (inline SVG, matching the reference deck's "発表の流れ" style) rather than
+ * a straight CSS triangle — an SVG path is the only reliable way to get a
+ * true curve, and unlike a CSS mask-image it rasterizes correctly through
+ * html-to-image (lib/evaluator/visionRender.tsx, exports) the same way the
+ * existing .slide-diagram__edge SVGs already do. */
+function FlowConnector() {
+  return (
+    <svg class="block-flow__connector" viewBox="0 0 52 24" aria-hidden="true">
+      <path d="M2 20 Q26 2 44 12" />
+      <path class="block-flow__connector-head" d="M38 5 L48 12 L38 19 Z" />
+    </svg>
+  )
+}
+
 function FlowView({ block }: { block: FlowBlock }) {
   const direction = block.direction ?? 'vertical'
   return (
     <div class="block-flow" data-direction={direction}>
       {block.steps.map((step, i) => (
         <div key={i} class="block-flow__step-wrap">
-          {i > 0 && <span class="block-flow__arrow" aria-hidden="true" />}
+          {i > 0 && (direction === 'horizontal' ? <FlowConnector /> : <span class="block-flow__arrow" aria-hidden="true" />)}
           <span
             class="block-pill block-flow__step"
             data-variant={step.variant ?? 'filled'}
@@ -311,24 +328,66 @@ function QuoteBlockView({ block }: { block: QuoteBlockData }) {
   )
 }
 
-function ImageRefView({ block }: { block: ImageRefBlock }) {
+function ImageRefSource({ source }: { source: ImageRefBlock['source'] }) {
+  if (!source?.text) return null
   return (
-    <div class="block-imageref">
-      <div class="block-imageref__placeholder">
-        <span>{block.caption}</span>
-      </div>
-      {block.source?.text && (
-        <p class="block-imageref__source">
-          {block.source.url ? (
-            <a href={block.source.url} target="_blank" rel="noreferrer">
-              {block.source.text}
-            </a>
-          ) : (
-            block.source.text
-          )}
-        </p>
+    <p class="block-imageref__source">
+      {source.url ? (
+        <a href={source.url} target="_blank" rel="noreferrer">
+          {source.text}
+        </a>
+      ) : (
+        source.text
       )}
-    </div>
+    </p>
+  )
+}
+
+function ImageRefView({ block }: { block: ImageRefBlock }) {
+  const [dataUri, setDataUri] = useState<string | null>(block.assetId ? getCachedImageAsset(block.assetId) : null)
+
+  useEffect(() => {
+    const assetId = block.assetId
+    if (!assetId) {
+      setDataUri(null)
+      return
+    }
+    const cached = getCachedImageAsset(assetId)
+    if (cached) {
+      setDataUri(cached)
+      return
+    }
+    let cancelled = false
+    getImageAsset(assetId).then((uri) => {
+      if (!cancelled) setDataUri(uri)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [block.assetId])
+
+  if (!dataUri) {
+    return (
+      <div class="block-imageref">
+        <div class="block-imageref__placeholder">
+          <span>{block.caption}</span>
+        </div>
+        <ImageRefSource source={block.source} />
+      </div>
+    )
+  }
+
+  return (
+    <figure class="block-imageref">
+      <img
+        src={dataUri}
+        alt={block.description || block.caption}
+        class="block-imageref__img"
+        data-fit={block.fit ?? 'contain'}
+      />
+      <figcaption class="block-imageref__caption">{block.caption}</figcaption>
+      <ImageRefSource source={block.source} />
+    </figure>
   )
 }
 
@@ -413,11 +472,24 @@ export function BlockStack({ blocks }: { blocks: PositionedBlock[] }) {
   // in slides.css.
   const density = groups.length <= 2 ? 'sparse' : groups.length <= 4 ? 'regular' : 'dense'
 
+  // Reference-deck pattern: a diagram-heavy slide closes with one short,
+  // large, centered sentence stating the takeaway (e.g. "データと状態を複製
+  // して、各Clientの画面に描画"). Detected structurally rather than via an
+  // explicit block flag: the last group is a standalone full-width paragraph
+  // that follows at least one other group, and is short enough to read as a
+  // one-line conclusion rather than body text.
+  const lastGroup = groups[groups.length - 1]
+  const lastIsConclusion =
+    groups.length > 1 &&
+    lastGroup?.kind === 'full' &&
+    lastGroup.block.kind === 'paragraph' &&
+    lastGroup.block.text.length <= 60
+
   return (
     <div class={`block-stack block-stack--${density}`}>
       {groups.map((g, i) =>
         g.kind === 'full' ? (
-          <div key={i} class="block-stack__full">
+          <div key={i} class={`block-stack__full${i === groups.length - 1 && lastIsConclusion ? ' block-stack__full--conclusion' : ''}`}>
             <BlockView block={g.block} />
           </div>
         ) : (

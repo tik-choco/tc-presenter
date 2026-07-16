@@ -14,7 +14,20 @@
 import { render } from 'preact'
 import { toPng } from 'html-to-image'
 import SlideView from '../../components/slides/SlideView'
+import { preloadImageAssets } from '../imageStore'
 import type { DeckTheme, Slide } from '../../types'
+
+/** imageRef assetIds referenced by `slide`'s blocks, for preloading before
+ * the offscreen render below — without this, an ImageRefView that hasn't
+ * hit the in-memory cache yet paints its placeholder on first render and the
+ * PNG never picks up the async-loaded image. */
+function imageAssetIdsOf(slide: Slide): string[] {
+  const ids: string[] = []
+  for (const block of slide.blocks ?? []) {
+    if (block.kind === 'imageRef' && block.assetId) ids.push(block.assetId)
+  }
+  return ids
+}
 
 /** Renders `slide` offscreen and returns a PNG data URI, or null if the
  * environment can't render (no DOM) or rasterization fails for any reason
@@ -28,6 +41,8 @@ export async function renderSlideToPng(
   pixelRatio = 1,
 ): Promise<string | null> {
   if (typeof document === 'undefined') return null
+
+  await preloadImageAssets(imageAssetIdsOf(slide))
 
   const host = document.createElement('div')
   host.style.position = 'fixed'
@@ -50,6 +65,12 @@ export async function renderSlideToPng(
 
     const canvasEl = host.querySelector<HTMLElement>('.slide-canvas')
     if (!canvasEl) return null
+
+    // Preloading the cache above only makes an <img> mount with its final
+    // `src` on first paint — decoding still happens asynchronously, and an
+    // undecoded image rasterizes as blank. Wait for each one explicitly.
+    const images = [...canvasEl.querySelectorAll('img')]
+    await Promise.all(images.map((img) => img.decode().catch(() => undefined)))
 
     // On screen `.slide-canvas` is a card floating on a page background, so
     // its rounded corners/shadow (slides.css) look correct. Here it fills

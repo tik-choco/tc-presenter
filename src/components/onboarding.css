@@ -1,0 +1,350 @@
+/* First-run onboarding wizard (components/Onboarding.tsx) — a modal overlay
+   above the app shell. Built only on src/styles/tokens.css custom properties
+   so it tracks light/dark automatically via :root[data-theme='dark']. Ported
+   from tc-town's src/styles/onboarding.css, retokenized for tc-presenter
+   (--accent -> --primary, --overlay -> literal rgba(), etc).
+   ============================================================ */
+
+.ob-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 14, 17, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 9999;
+  animation: ob-overlay-in var(--dur-med) var(--ease-out);
+}
+
+:root[data-theme='dark'] .ob-overlay {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.ob-card {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+  max-height: min(90vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: none;
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  animation: ob-card-in var(--dur-med) var(--ease-out);
+}
+
+@keyframes ob-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ob-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.ob-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  appearance: none;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-subtle);
+  padding: 8px;
+  border-radius: 50%;
+  line-height: 0;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.ob-close:hover {
+  color: var(--text-strong);
+  background: var(--surface-3);
+}
+
+.ob-body {
+  padding: 28px 28px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ob-hero {
+  display: flex;
+  justify-content: center;
+  color: var(--primary);
+  padding: 16px 0 0;
+}
+
+.ob-hero > svg {
+  box-sizing: content-box;
+  padding: 16px;
+  background: var(--primary-soft);
+  border-radius: 50%;
+}
+
+.ob-step-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--primary);
+}
+
+.ob-step-head > svg {
+  flex: none;
+  box-sizing: content-box;
+  padding: 8px;
+  background: var(--primary-soft);
+  border-radius: 50%;
+}
+
+.ob-step-head .ob-title {
+  margin: 0;
+}
+
+.ob-title {
+  margin: 0;
+  text-align: center;
+  font-size: 1.3rem;
+  color: var(--text-strong);
+}
+
+.ob-step-head .ob-title {
+  text-align: left;
+  font-size: 1.15rem;
+}
+
+.ob-text {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.7;
+}
+
+.ob-text-subtle {
+  color: var(--text-subtle);
+  font-size: 0.9rem;
+}
+
+.ob-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ob-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.ob-input {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-m);
+  padding: 8px 12px;
+  min-width: 0;
+  width: 100%;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.ob-input:hover:not(:focus) {
+  background: var(--surface-3);
+}
+
+.ob-input:focus {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 0;
+  border-color: transparent;
+}
+
+.ob-test-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.ob-test-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--success);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.ob-error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--danger-text);
+}
+
+.ob-btn {
+  appearance: none;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 20px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-strong);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+  align-self: flex-start;
+  /* Never let the label wrap character-by-character when its flex row runs
+     out of room — the row should wrap instead (see .ob-footer-actions /
+     .ob-test-row), not the text inside the button. */
+  white-space: nowrap;
+  flex: none;
+}
+
+.ob-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--text-subtle);
+}
+
+.ob-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ob-btn-accent {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--shadow-1);
+}
+
+.ob-btn-accent:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+  box-shadow: var(--shadow-2);
+}
+
+.ob-spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--on-primary);
+  animation: ob-spin 0.8s linear infinite;
+}
+
+@keyframes ob-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ob-feature-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ob-feature-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.ob-feature-list li > svg {
+  flex: none;
+  color: var(--primary);
+  background: var(--primary-soft);
+  box-sizing: content-box;
+  padding: 6px;
+  border-radius: 50%;
+}
+
+.ob-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  padding: 16px 28px 20px;
+  border-top: 1px solid var(--border);
+}
+
+.ob-dots {
+  display: flex;
+  gap: 8px;
+}
+
+.ob-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+  transition: background var(--dur-fast) var(--ease), width var(--dur-med) var(--ease);
+}
+
+.ob-dot.is-active {
+  width: 22px;
+  background: var(--primary);
+}
+
+.ob-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* --- Responsive ------------------------------------------------------------------ */
+
+/* Narrow phones (~360-430px): the wizard's generous padding eats too much of
+   the available width, leaving cramped columns for body text/fields. Tighten
+   it and let the footer stack (dots above the action buttons) instead of
+   squeezing both onto one row. */
+@media (max-width: 480px) {
+  .ob-body {
+    padding: 20px 20px 16px;
+  }
+
+  .ob-footer {
+    justify-content: center;
+    padding: 16px 20px 20px;
+  }
+
+  .ob-dots {
+    order: 1;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .ob-footer-actions {
+    order: 2;
+    width: 100%;
+    justify-content: center;
+  }
+}

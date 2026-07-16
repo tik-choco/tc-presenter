@@ -25,18 +25,20 @@
 // app.tsx to call `setTab('present')`. Until that's wired, the button still
 // saves the deck and shows a "switch to Present" hint so the flow degrades
 // gracefully to one extra manual click.
-import { useEffect, useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import type { JSX } from 'preact'
-import { FileDown, FileText, Film } from 'lucide-preact'
+import { FileDown, FileText, Film, ImagePlus, Trash2 } from 'lucide-preact'
 import './editor.css'
 import { t } from '../../i18n'
 import { deleteDeck, listDecks, loadDeck, saveDeck } from '../../lib/kv'
 import { loadLlmConfig, subscribeLlmConfig, type SharedLlmConfigV1 } from '../../lib/llmConfig'
 import { enqueueGenerateJob, subscribeGenerateJobs, getGenerateJobs } from '../../lib/generateJobs'
 import { enqueueExportJob } from '../../lib/exportJobs'
+import { deleteImageAsset, getCachedImageAsset, getImageAsset, putImageAsset } from '../../lib/imageStore'
+import { describeImage } from '../../lib/imageDescribe'
 import SlideView from '../../components/slides/SlideView'
 import { DECK_THEME_PRESETS } from './deckThemePresets'
-import { loadVisionPresetId } from '../settings/localPrefs'
+import { loadGenerateRolePrefs, loadVisionPresetId } from '../settings/localPrefs'
 import {
   DEFAULT_MAX_REFINE_ITERATIONS,
   DEFAULT_QUALITY_THRESHOLD,
@@ -48,6 +50,8 @@ import {
   type EditorTabProps,
   type GenerateOptions,
   type GenerateProgressEvent,
+  type ImageRefBlock,
+  type PositionedBlock,
   type Slide,
   type SlideBullet,
   type SlideLayout,
@@ -199,13 +203,273 @@ function ParagraphsField({ paragraphs, onChange }: { paragraphs: string[]; onCha
 }
 
 // ---------------------------------------------------------------------------
-// One slide's editor card (preview + fields)
+// Image blocks: upload UI + editing for Slide.blocks' imageRef entries. See
+// types.ts's ImageRefBlock — assetId points into lib/imageStore.ts
+// (IndexedDB), description is vision-LLM-generated (lib/imageDescribe.ts).
 
-interface SlideEditorCardProps {
+const MAX_IMAGE_DIMENSION = 1600
+const IMAGE_JPEG_QUALITY = 0.85
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('image decode failed'))
+    img.src = src
+  })
+}
+
+/** Downscales `file` to at most MAX_IMAGE_DIMENSION on its long edge and
+ * re-encodes it (PNG source stays PNG for transparency, everything else
+ * becomes JPEG) — keeps the IndexedDB-backed asset small. Returns null on any
+ * failure (unsupported file, decode error, no canvas 2d context, etc). */
+async function resizeImageForUpload(file: File): Promise<string | null> {
+  try {
+    const original = await readFileAsDataUrl(file)
+    const img = await loadImageElement(original)
+    const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(img.naturalWidth, img.naturalHeight))
+    const width = Math.max(1, Math.round(img.naturalWidth * scale))
+    const height = Math.max(1, Math.round(img.naturalHeight * scale))
+
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    ctx.drawImage(img, 0, 0, width, height)
+
+    const isPng = file.type === 'image/png'
+    return canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', isPng ? undefined : IMAGE_JPEG_QUALITY)
+  } catch {
+    return null
+  }
+}
+
+/** A slide with `blocks` empty renders exclusively from `body`/`visual` (see
+ * types.ts's Slide.blocks doc) — adding the first image block would silently
+ * switch that slide to block-rendering and drop its existing bullets/visual.
+ * Carries them over as equivalent blocks so the switch is lossless. */
+function migrateBodyToBlocks(slide: Slide): PositionedBlock[] {
+  const blocks: PositionedBlock[] = []
+  for (const paragraph of slide.body.paragraphs) blocks.push({ kind: 'paragraph', text: paragraph })
+  if (slide.body.bullets.length > 0) blocks.push({ kind: 'bulletList', bullets: slide.body.bullets })
+  if (slide.visual.kind !== 'none') blocks.push({ kind: 'visual', visual: slide.visual })
+  return blocks
+}
+
+interface ImageBlockEditorProps {
+  block: ImageRefBlock
+  describing: boolean
+  onChange: (patch: Partial<ImageRefBlock>) => void
+  onDelete: () => void
+}
+
+function ImageBlockEditor({ block, describing, onChange, onDelete }: ImageBlockEditorProps) {
+  const [dataUri, setDataUri] = useState<string | null>(block.assetId ? getCachedImageAsset(block.assetId) : null)
+
+  useEffect(() => {
+    const assetId = block.assetId
+    if (!assetId) {
+      setDataUri(null)
+      return
+    }
+    const cached = getCachedImageAsset(assetId)
+    if (cached) {
+      setDataUri(cached)
+      return
+    }
+    let cancelled = false
+    getImageAsset(assetId).then((uri) => {
+      if (!cancelled) setDataUri(uri)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [block.assetId])
+
+  return (
+    <div class="edt-image-block">
+      {dataUri && <img src={dataUri} alt={block.caption} class="edt-image-block__preview" />}
+      <div class="edt-image-block__fields">
+        <div class="edt-field">
+          <label>{t('editor.slide.imageCaption')}</label>
+          <input type="text" value={block.caption} onChange={(e) => onChange({ caption: e.currentTarget.value })} />
+        </div>
+        <div class="edt-field">
+          <label>
+            {t('editor.slide.imageDescription')}
+            {describing && <span class="edt-image-block__spinner" aria-hidden="true" />}
+          </label>
+          <textarea
+            rows={2}
+            value={block.description ?? ''}
+            placeholder={describing ? t('editor.slide.imageDescribing') : ''}
+            onChange={(e) => onChange({ description: e.currentTarget.value })}
+          />
+        </div>
+        <div class="edt-field">
+          <label>{t('editor.slide.imageFit')}</label>
+          <select value={block.fit ?? 'contain'} onChange={(e) => onChange({ fit: e.currentTarget.value as 'contain' | 'cover' })}>
+            <option value="contain">{t('editor.slide.imageFit.contain')}</option>
+            <option value="cover">{t('editor.slide.imageFit.cover')}</option>
+          </select>
+        </div>
+        <button type="button" class="edt-btn edt-btn--danger" onClick={onDelete}>
+          <Trash2 size={14} aria-hidden="true" />
+          {t('editor.slide.imageRemove')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+interface ImageBlocksFieldProps {
+  slide: Slide
+  deckLang: string
+  onChange: (patch: Partial<Slide>) => void
+  onDescribed: (assetId: string, description: string) => void
+}
+
+function ImageBlocksField({ slide, deckLang, onChange, onDescribed }: ImageBlocksFieldProps) {
+  const [uploading, setUploading] = useState(false)
+  const [describingIds, setDescribingIds] = useState<Set<string>>(new Set())
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const blocks = slide.blocks ?? []
+
+  async function handleFiles(files: FileList | null) {
+    const file = files?.[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      const resized = await resizeImageForUpload(file)
+      if (!resized) return
+      const assetId = await putImageAsset(resized)
+      if (!assetId) return
+
+      const newBlock: PositionedBlock = {
+        kind: 'imageRef',
+        caption: file.name.replace(/\.[^.]+$/, ''),
+        assetId,
+        fit: 'contain',
+      }
+      const base = blocks.length > 0 ? blocks : migrateBodyToBlocks(slide)
+      onChange({ blocks: [...base, newBlock] })
+
+      setDescribingIds((prev) => new Set(prev).add(assetId))
+      const visionPresetId = loadVisionPresetId()
+      describeImage(resized, { lang: deckLang, presetId: visionPresetId || undefined })
+        .then((description) => {
+          if (description) onDescribed(assetId, description)
+        })
+        .finally(() => {
+          setDescribingIds((prev) => {
+            const next = new Set(prev)
+            next.delete(assetId)
+            return next
+          })
+        })
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function handleBlockChange(index: number, patch: Partial<ImageRefBlock>) {
+    onChange({ blocks: blocks.map((b, i) => (i === index && b.kind === 'imageRef' ? { ...b, ...patch } : b)) })
+  }
+
+  function handleBlockDelete(index: number) {
+    const target = blocks[index]
+    if (target?.kind === 'imageRef' && target.assetId) void deleteImageAsset(target.assetId)
+    onChange({ blocks: blocks.filter((_, i) => i !== index) })
+  }
+
+  return (
+    <div class="edt-field">
+      <label>{t('editor.slide.images')}</label>
+      {blocks.map((block, i) =>
+        block.kind === 'imageRef' ? (
+          <ImageBlockEditor
+            key={block.assetId ?? i}
+            block={block}
+            describing={block.assetId ? describingIds.has(block.assetId) : false}
+            onChange={(patch) => handleBlockChange(i, patch)}
+            onDelete={() => handleBlockDelete(i)}
+          />
+        ) : null,
+      )}
+      <div
+        class="edt-image-dropzone"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault()
+          void handleFiles(e.dataTransfer?.files ?? null)
+        }}
+      >
+        <input
+          type="file"
+          accept="image/*"
+          ref={fileInputRef}
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            void handleFiles(e.currentTarget.files)
+            e.currentTarget.value = ''
+          }}
+        />
+        <button type="button" class="edt-btn" disabled={uploading} onClick={() => fileInputRef.current?.click()}>
+          <ImagePlus size={14} aria-hidden="true" />
+          {uploading ? t('editor.slide.imageUploading') : t('editor.slide.addImage')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Responsive fit-scale for the detail pane preview: watches the container's
+// width via ResizeObserver and derives a SlideView `scale` so the fixed
+// 1280px-wide canvas always fits, capped at 0.55 so it never blows up past a
+// "readable but still a preview" size on very wide panes.
+
+function useFitScale(baseWidth: number) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [scale, setScale] = useState(0.35)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width
+      if (!width) return
+      setScale(Math.min(0.55, width / baseWidth))
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [baseWidth])
+
+  return { ref, scale }
+}
+
+// ---------------------------------------------------------------------------
+// Detail pane: the selected slide's large preview + edit form (right side of
+// the master/detail edt-workspace layout — thumbnails live in the rail).
+
+interface SlideDetailCardProps {
   slide: Slide
   theme: DeckTheme
   pageTotal: number
+  deckLang: string
   onChange: (patch: Partial<Slide>) => void
+  onImageDescribed: (assetId: string, description: string) => void
   onMoveUp: () => void
   onMoveDown: () => void
   onDelete: () => void
@@ -213,39 +477,43 @@ interface SlideEditorCardProps {
   canMoveDown: boolean
 }
 
-function SlideEditorCard({
+function SlideDetailCard({
   slide,
   theme,
   pageTotal,
+  deckLang,
   onChange,
+  onImageDescribed,
   onMoveUp,
   onMoveDown,
   onDelete,
   canMoveUp,
   canMoveDown,
-}: SlideEditorCardProps) {
+}: SlideDetailCardProps) {
+  const { ref: previewRef, scale } = useFitScale(1280)
+
   return (
-    <div class="edt-slide">
-      <div class="edt-slide__preview">
-        <SlideView slide={slide} theme={theme} scale={0.24} pageTotal={pageTotal} />
+    <div class="edt-detail-card">
+      <div class="edt-detail-card__toolbar">
+        <span class="edt-detail-card__index">#{slide.index}</span>
+        <div class="edt-panel__actions">
+          <button type="button" class="edt-btn" disabled={!canMoveUp} onClick={onMoveUp}>
+            {t('editor.deck.moveUp')}
+          </button>
+          <button type="button" class="edt-btn" disabled={!canMoveDown} onClick={onMoveDown}>
+            {t('editor.deck.moveDown')}
+          </button>
+          <button type="button" class="edt-btn edt-btn--danger" onClick={onDelete}>
+            {t('editor.deck.deleteSlide')}
+          </button>
+        </div>
       </div>
 
-      <div class="edt-slide__fields">
-        <div class="edt-slide__toolbar">
-          <span class="edt-slide__index">#{slide.index}</span>
-          <div class="edt-panel__actions">
-            <button type="button" class="edt-btn" disabled={!canMoveUp} onClick={onMoveUp}>
-              {t('editor.deck.moveUp')}
-            </button>
-            <button type="button" class="edt-btn" disabled={!canMoveDown} onClick={onMoveDown}>
-              {t('editor.deck.moveDown')}
-            </button>
-            <button type="button" class="edt-btn edt-btn--danger" onClick={onDelete}>
-              {t('editor.deck.deleteSlide')}
-            </button>
-          </div>
-        </div>
+      <div class="edt-detail-card__preview" ref={previewRef}>
+        <SlideView slide={slide} theme={theme} scale={scale} pageTotal={pageTotal} />
+      </div>
 
+      <div class="edt-detail-card__fields">
         <div class="edt-field">
           <label>{t('editor.slide.title')}</label>
           <input
@@ -286,6 +554,8 @@ function SlideEditorCard({
           paragraphs={slide.body.paragraphs}
           onChange={(paragraphs) => onChange({ body: { ...slide.body, paragraphs } })}
         />
+
+        <ImageBlocksField slide={slide} deckLang={deckLang} onChange={onChange} onDescribed={onImageDescribed} />
 
         <div class="edt-field">
           <label>{t('editor.slide.speakerNotes')}</label>
@@ -350,15 +620,22 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
   const [useVisionJudge, setUseVisionJudge] = useState(() => Boolean(loadVisionPresetId()))
   const [threshold, setThreshold] = useState(String(DEFAULT_QUALITY_THRESHOLD))
   const [maxRefine, setMaxRefine] = useState(String(DEFAULT_MAX_REFINE_ITERATIONS))
-  const [presetId, setPresetId] = useState('')
+  // Orchestrator/worker role defaults set once in Settings (localPrefs.ts's
+  // GenerateRolePrefs): the pickers below start from them so a run needs no
+  // per-run model configuration — matching the vision judge's "configure it
+  // once and generation just works" precedent (useVisionJudge above). Each
+  // picker remains a per-run override; changing it here never writes back to
+  // the saved prefs (Settings stays the single place that edits defaults).
+  const [roleDefaults] = useState(loadGenerateRolePrefs)
+  const [presetId, setPresetId] = useState(roleDefaults.orchestratorPresetId)
   const [useNetwork, setUseNetwork] = useState(false)
   const [compactPrompt, setCompactPrompt] = useState(false)
   const [batchRefine, setBatchRefine] = useState(false)
   // Orchestrator/worker split (types.ts GenerateOptions.workerPresetId doc):
-  // '' = same preset as the main one; concurrency stays '1' (sequential)
-  // unless the user raises it — local LLM servers are single-request anyway.
-  const [workerPresetId, setWorkerPresetId] = useState('')
-  const [workerConcurrency, setWorkerConcurrency] = useState('1')
+  // '' = same preset as the main one; concurrency stays at 1 (sequential)
+  // unless raised — local LLM servers are single-request anyway.
+  const [workerPresetId, setWorkerPresetId] = useState(roleDefaults.workerPresetId)
+  const [workerConcurrency, setWorkerConcurrency] = useState(String(roleDefaults.workerConcurrency))
 
   const [llmConfig, setLlmConfig] = useState<SharedLlmConfigV1 | null>(() => loadLlmConfig())
   useEffect(() => subscribeLlmConfig(setLlmConfig), [])
@@ -367,6 +644,22 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
   const [queuedNotice, setQueuedNotice] = useState(false)
   const [score, setScore] = useState<DeckScore | null>(null)
   const [presentHint, setPresentHint] = useState(false)
+
+  // Master/detail edit-mode selection. Derived (not effect-synced) so a
+  // deleted slide or a whole deck switch falls back to the first slide for
+  // free, without an extra useEffect to keep it in bounds.
+  const [selectedSlideId, setSelectedSlideId] = useState<string | null>(null)
+  const selectedSlide = deck?.slides.find((s) => s.id === selectedSlideId) ?? deck?.slides[0] ?? null
+  const railRef = useRef<HTMLDivElement>(null)
+
+  // Mirrors `deck` for the image-description fire-and-forget callback below:
+  // that promise resolves well after the render that started it, possibly
+  // after other edits landed, so it must read the latest deck rather than
+  // whatever was captured in its own closure.
+  const deckRef = useRef<Deck | null>(deck)
+  useEffect(() => {
+    deckRef.current = deck
+  }, [deck])
 
   // Live view of the deck being generated right now: the running job's
   // latest partial-deck snapshot (skeleton placeholders included), streamed
@@ -396,6 +689,16 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
     const timer = setTimeout(() => setQueuedNotice(false), 4000)
     return () => clearTimeout(timer)
   }, [queuedNotice])
+
+  // Keep the selected thumbnail visible in the rail whenever selection
+  // changes (click, keyboard nav, add/delete fallback) — not on every
+  // render, so scrolling the rail manually doesn't get fought.
+  useEffect(() => {
+    if (!selectedSlide) return
+    const el = railRef.current?.querySelector<HTMLElement>(`[data-slide-id="${selectedSlide.id}"]`)
+    el?.scrollIntoView({ block: 'nearest' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSlide?.id])
 
   // Deck list + score panel both need to react to job completion without the
   // editor itself awaiting generation — the job runner (lib/generateJobs.ts)
@@ -503,6 +806,22 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
     commitDeck({ ...deck, slides: deck.slides.map((s) => (s.id === id ? { ...s, ...patch } : s)) })
   }
 
+  function setImageBlockDescription(slideId: string, assetId: string, description: string) {
+    const current = deckRef.current
+    if (!current) return
+    commitDeck({
+      ...current,
+      slides: current.slides.map((s) =>
+        s.id !== slideId
+          ? s
+          : {
+              ...s,
+              blocks: (s.blocks ?? []).map((b) => (b.kind === 'imageRef' && b.assetId === assetId ? { ...b, description } : b)),
+            },
+      ),
+    })
+  }
+
   function moveSlide(id: string, direction: -1 | 1) {
     if (!deck) return
     const idx = deck.slides.findIndex((s) => s.id === id)
@@ -529,12 +848,32 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
       buildStage: { isBuildSlide: false, groupId: null, stageIndex: null },
     }
     commitDeck({ ...deck, slides: [...deck.slides, slide] })
+    setSelectedSlideId(slide.id)
   }
 
   function deleteSlide(id: string) {
     if (!deck) return
+    if (selectedSlide?.id === id) {
+      const idx = deck.slides.findIndex((s) => s.id === id)
+      const neighbor = deck.slides[idx + 1] ?? deck.slides[idx - 1] ?? null
+      setSelectedSlideId(neighbor?.id ?? null)
+    }
     const slides = deck.slides.filter((s) => s.id !== id).map((s, i) => ({ ...s, index: i + 1 }))
     commitDeck({ ...deck, slides })
+  }
+
+  function handleRailKeyDown(event: JSX.TargetedEvent<HTMLDivElement, KeyboardEvent>) {
+    if (!deck || deck.slides.length === 0) return
+    const currentIdx = deck.slides.findIndex((s) => s.id === selectedSlide?.id)
+    const baseIdx = currentIdx < 0 ? 0 : currentIdx
+    let nextIdx: number | null = null
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') nextIdx = Math.min(deck.slides.length - 1, baseIdx + 1)
+    else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') nextIdx = Math.max(0, baseIdx - 1)
+    if (nextIdx === null) return
+    event.preventDefault()
+    const nextSlide = deck.slides[nextIdx]
+    setSelectedSlideId(nextSlide.id)
+    railRef.current?.querySelector<HTMLElement>(`[data-slide-id="${nextSlide.id}"]`)?.focus()
   }
 
   function handlePresent() {
@@ -848,9 +1187,6 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
           <div class="edt-panel__header">
             <span class="edt-panel__title">{t('editor.deck.slideCount', { count: deck.slides.length })}</span>
             <div class="edt-panel__actions">
-              <button type="button" class="edt-btn" onClick={addSlide}>
-                {t('editor.deck.addSlide')}
-              </button>
               <button type="button" class="edt-btn" onClick={handleExportPdf}>
                 <FileText size={16} aria-hidden="true" />
                 {t('editor.export.pdf')}
@@ -870,21 +1206,59 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
           </div>
           {presentHint && <div class="edt-present-hint">{t('editor.deck.presentHint')}</div>}
 
-          <div class="edt-slide-list">
-            {deck.slides.map((slide, i) => (
-              <SlideEditorCard
-                key={slide.id}
-                slide={slide}
-                theme={deck.theme}
-                pageTotal={deck.slides.length}
-                onChange={(patch) => updateSlide(slide.id, patch)}
-                onMoveUp={() => moveSlide(slide.id, -1)}
-                onMoveDown={() => moveSlide(slide.id, 1)}
-                onDelete={() => deleteSlide(slide.id)}
-                canMoveUp={i > 0}
-                canMoveDown={i < deck.slides.length - 1}
-              />
-            ))}
+          <div class="edt-workspace">
+            <div
+              class="edt-rail"
+              role="listbox"
+              aria-label={t('editor.deck.slideListLabel')}
+              ref={railRef}
+              onKeyDown={handleRailKeyDown}
+            >
+              {deck.slides.map((slide) => {
+                const isSelected = selectedSlide?.id === slide.id
+                return (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    class={`edt-thumb${isSelected ? ' is-selected' : ''}`}
+                    data-slide-id={slide.id}
+                    key={slide.id}
+                    onClick={() => setSelectedSlideId(slide.id)}
+                  >
+                    <span class="edt-thumb__num">{slide.index}</span>
+                    <span class="edt-thumb__frame">
+                      <SlideView slide={slide} theme={deck.theme} scale={0.155} pageTotal={deck.slides.length} />
+                    </span>
+                    <span class="edt-thumb__title">{slide.title.text || '…'}</span>
+                  </button>
+                )
+              })}
+              <button type="button" class="edt-btn edt-rail__add" onClick={addSlide}>
+                {t('editor.deck.addSlide')}
+              </button>
+            </div>
+
+            <div class="edt-detail">
+              {selectedSlide ? (
+                <SlideDetailCard
+                  key={selectedSlide.id}
+                  slide={selectedSlide}
+                  theme={deck.theme}
+                  pageTotal={deck.slides.length}
+                  deckLang={deck.lang}
+                  onChange={(patch) => updateSlide(selectedSlide.id, patch)}
+                  onImageDescribed={(assetId, description) => setImageBlockDescription(selectedSlide.id, assetId, description)}
+                  onMoveUp={() => moveSlide(selectedSlide.id, -1)}
+                  onMoveDown={() => moveSlide(selectedSlide.id, 1)}
+                  onDelete={() => deleteSlide(selectedSlide.id)}
+                  canMoveUp={deck.slides.findIndex((s) => s.id === selectedSlide.id) > 0}
+                  canMoveDown={deck.slides.findIndex((s) => s.id === selectedSlide.id) < deck.slides.length - 1}
+                />
+              ) : (
+                <div class="edt-empty">{t('editor.deck.noSlides')}</div>
+              )}
+            </div>
           </div>
         </div>
       )}

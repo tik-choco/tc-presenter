@@ -3,23 +3,45 @@
 //     slide whose blocks are all text-shaped, or whose legacy `visual` is
 //     empty) is rebuilt as real PowerPoint text boxes/bullets, so it stays
 //     editable in PowerPoint/Keynote/Google Slides.
-//   - Slides carrying a figure (a non-text block like mindmap/flow/
-//     comparison/gridHeatmap/boxGroup/pillRow/iconRow/imageRef/visual, or a
-//     populated legacy `visual`) are rasterized whole via the shared
-//     SlideView renderer and placed as a single full-bleed image — mixing
-//     "real text" over a background snapshot of the same slide would double
-//     up the content, so these become "one PNG + speaker notes" slides
-//     instead.
+//   - imageRef blocks whose `assetId` resolves to a real image
+//     (lib/imageStore.ts) are placed as a real, separately-editable
+//     pptxgenjs image alongside any text blocks, instead of being flattened
+//     into a raster — see placeImageBlock() below. A slide falls back to the
+//     rasterized path below when any of its imageRef blocks lack a
+//     resolvable asset (the "placeholder" case).
+//   - Slides carrying any other figure (a non-text block like mindmap/flow/
+//     comparison/gridHeatmap/boxGroup/pillRow/iconRow/visual, or a populated
+//     legacy `visual`) are rasterized whole via the shared SlideView
+//     renderer and placed as a single full-bleed image — mixing "real text"
+//     over a background snapshot of the same slide would double up the
+//     content, so these become "one PNG + speaker notes" slides instead.
 // pptxgenjs is loaded via a dynamic import so it never inflates the main
 // app bundle.
 import { renderSlideToPng } from '../evaluator/visionRender'
+import { getImageAsset } from '../imageStore'
 import type PptxGenJS from 'pptxgenjs'
-import type { BlockColorRole, Deck, DeckAspectRatio, DeckTheme, PositionedBlock, Slide, SlideBullet } from '../../types'
+import type {
+  BlockColorRole,
+  Deck,
+  DeckAspectRatio,
+  DeckTheme,
+  ImageRefBlock,
+  PositionedBlock,
+  Slide,
+  SlideBlockPlacement,
+  SlideBullet,
+} from '../../types'
 import { sanitizeFilename } from './filename'
 import { pngDataUriToJpeg } from './image'
 
 const HERO_TYPES = new Set<Slide['type']>(['title', 'section_break'])
 const TEXT_BLOCK_KINDS = new Set<PositionedBlock['kind']>(['bulletList', 'paragraph', 'quote', 'calloutBox'])
+
+type PositionedImageRefBlock = ImageRefBlock & SlideBlockPlacement
+
+function isImageRefBlock(block: PositionedBlock): block is PositionedImageRefBlock {
+  return block.kind === 'imageRef'
+}
 
 /** XML 1.0 forbids these control characters outright (everything except tab/
  * LF/CR in the C0 range); pptxgenjs writes text/attribute values straight
@@ -68,14 +90,71 @@ function resolveFontFace(fontFamily: string | undefined): string | undefined {
   return safe || undefined
 }
 
-/** Whether `slide` needs to be rasterized as a single image rather than
- * rebuilt as editable text boxes — see the module doc comment above. */
-function isGraphicSlide(slide: Slide): boolean {
+/** Whether `slide` carries a non-text, non-imageRef block (mindmap/flow/
+ * comparison/gridHeatmap/boxGroup/pillRow/iconRow/visual) or a populated
+ * legacy `visual` — these always rasterize whole, same as before. imageRef is
+ * evaluated separately below so a slide that's otherwise text-only can keep
+ * its editable text boxes and place its photo as a real, separate image. */
+function hasOtherGraphicBlocks(slide: Slide): boolean {
   if (HERO_TYPES.has(slide.type)) return false
   if (slide.blocks && slide.blocks.length > 0) {
-    return slide.blocks.some((b) => !TEXT_BLOCK_KINDS.has(b.kind))
+    return slide.blocks.some((b) => !TEXT_BLOCK_KINDS.has(b.kind) && b.kind !== 'imageRef')
   }
   return slide.visual.kind !== 'none'
+}
+
+function imageRefBlocksOf(slide: Slide): PositionedImageRefBlock[] {
+  if (HERO_TYPES.has(slide.type) || !slide.blocks) return []
+  return slide.blocks.filter(isImageRefBlock)
+}
+
+/** Resolves `block.assetId` (lib/imageStore.ts, IndexedDB-backed) to a data
+ * URI, or null when unset/unresolvable — the caller falls back to the old
+ * whole-slide-rasterized placeholder in that case, matching how the block
+ * renders elsewhere when its asset is missing. */
+async function resolveImageAsset(block: PositionedImageRefBlock): Promise<string | null> {
+  if (!block.assetId) return null
+  return getImageAsset(block.assetId)
+}
+
+/** Places one resolved imageRef block as a real, separately-editable
+ * pptxgenjs image (not baked into a raster), with its caption/source as a
+ * small text line beneath it — keeps the slide's other text boxes editable
+ * instead of flattening the whole slide into one PNG. */
+function placeImageBlock(
+  pSlide: PptxGenJS.PresSlide,
+  block: PositionedImageRefBlock,
+  dataUri: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  grayColor: string,
+  fontFace: string | undefined,
+): void {
+  const captionH = Math.min(0.35, h * 0.25)
+  const imgH = Math.max(0.2, h - captionH)
+  pSlide.addImage({
+    data: dataUri,
+    x,
+    y,
+    w,
+    h: imgH,
+    sizing: { type: block.fit === 'cover' ? 'cover' : 'contain', w, h: imgH },
+  })
+  const captionParts = [sanitizeXmlText(block.caption), sanitizeXmlText(block.source?.text)].filter((t) => t.length > 0)
+  if (captionParts.length > 0) {
+    pSlide.addText(captionParts.join(' — '), {
+      x,
+      y: y + imgH,
+      w,
+      h: captionH,
+      fontSize: 9,
+      color: grayColor,
+      align: 'center',
+      fontFace,
+    })
+  }
 }
 
 interface Geometry {
@@ -148,8 +227,8 @@ function blocksToTextProps(
         break
       }
       default:
-        // Non-text blocks never reach here — the caller only calls this
-        // for slides where isGraphicSlide() is false.
+        // Non-text blocks (including imageRef) never reach here — the
+        // caller pre-filters to TEXT_BLOCK_KINDS before calling this.
         break
     }
   }
@@ -266,7 +345,21 @@ export async function buildDeckPptx(
     const pSlide = pptx.addSlide()
     pSlide.background = { color: bgColor }
 
-    if (isGraphicSlide(slide)) {
+    // imageRef blocks only bypass rasterization when EVERY one on the slide
+    // resolves to a real asset — a partial resolution would leave an empty
+    // gap where a placeholder used to render, so any miss falls back to the
+    // old whole-slide raster (which draws its own placeholder box).
+    const otherGraphic = hasOtherGraphicBlocks(slide)
+    const imageBlocks = otherGraphic ? [] : imageRefBlocksOf(slide)
+    const resolvedImages = new Map<PositionedImageRefBlock, string>()
+    for (const block of imageBlocks) {
+      const dataUri = await resolveImageAsset(block)
+      if (dataUri) resolvedImages.set(block, dataUri)
+    }
+    const useEditableImages = imageBlocks.length > 0 && resolvedImages.size === imageBlocks.length
+    const rasterize = otherGraphic || (imageBlocks.length > 0 && !useEditableImages)
+
+    if (rasterize) {
       const png = await renderSlide(slide, theme, total, 2)
       if (png) {
         // Re-encoded to JPEG before embedding — see image.ts's doc comment.
@@ -283,12 +376,30 @@ export async function buildDeckPptx(
         addHeroTitle(pSlide, slide, geo, textColor, primaryColor, fontFace)
       } else {
         addTitle(pSlide, slide, geo, textColor, primaryColor, fontFace)
+        const textBlocks = slide.blocks?.filter((b) => TEXT_BLOCK_KINDS.has(b.kind)) ?? []
         const items =
           slide.blocks && slide.blocks.length > 0
-            ? blocksToTextProps(slide.blocks, colorForRole, textColor, fontFace)
+            ? blocksToTextProps(textBlocks, colorForRole, textColor, fontFace)
             : [...bulletsToTextProps(slide.body.bullets, textColor, fontFace), ...paragraphsToTextProps(slide.body.paragraphs, textColor, fontFace)]
+
+        // Vertical split: text on top, images stacked below — this app's
+        // pptx export has never modeled the renderer's left/right column
+        // packing (blocksToTextProps already just concatenates linearly), so
+        // stacking images the same way keeps this consistent rather than
+        // building a one-off layout engine just for imageRef.
+        const textH = items.length > 0 ? (useEditableImages ? geo.bodyH * 0.4 : geo.bodyH) : 0
         if (items.length > 0) {
-          pSlide.addText(items, { x: 0.5, y: geo.bodyY, w: geo.w - 1, h: geo.bodyH, valign: 'top', fontFace })
+          pSlide.addText(items, { x: 0.5, y: geo.bodyY, w: geo.w - 1, h: textH, valign: 'top', fontFace })
+        }
+        if (useEditableImages) {
+          const imagesY = geo.bodyY + textH
+          const imagesH = geo.bodyY + geo.bodyH - imagesY
+          const perImageH = imagesH / imageBlocks.length
+          imageBlocks.forEach((block, idx) => {
+            const dataUri = resolvedImages.get(block)
+            if (!dataUri) return
+            placeImageBlock(pSlide, block, dataUri, 0.5, imagesY + idx * perImageH, geo.w - 1, perImageH, grayColor, fontFace)
+          })
         }
       }
       const citationText = sanitizeXmlText(slide.citation?.text)

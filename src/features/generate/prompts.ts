@@ -31,7 +31,8 @@ const STYLE_GUIDE = `Slide quality bar (matches a strong reference deck we bench
 - Color discipline: white background + primary (wine-red) is the default for everything; the "warning" color role is reserved strictly for caution/exclusion/a called-out risk or trend, never for plain emphasis. Flat fills and thin borders only — no gradients, no drop shadows.
 - Every slide that uses external data, a quote, an image, or a screenshot MUST have a citation (source text, and a URL if you have one).
 - Tables (dataTable / visual "table") stay within 5-8 rows x 3-6 columns. Code or raw JSON is the one case allowed a denser, longer block of text instead of trying to compress it into pills/bullets.
-- Prefer a diagram/chart/table/structured block over a wall of text where the source material supports it.`
+- Prefer a diagram/chart/table/structured block over a wall of text where the source material supports it.
+- If an imageRef block in the CURRENT slide JSON you were given already has an "assetId", copy that exact string through unchanged — never delete, edit, or invent one. An imageRef's "description" (if present) describes what the image actually shows; use it as grounding context for nearby text/speakerNotes, never restate it verbatim on the slide. When you add a brand-new imageRef yourself, leave "assetId" unset — it is a placeholder reference only and must never be invented.`
 
 /** design-spec.md §4.1's block-selection guide, reproduced close to
  * verbatim — this is the vocabulary the segment-slide prompt below asks the
@@ -67,7 +68,7 @@ const BLOCK_SHAPES = `Block JSON shapes (fill exactly these fields; every block 
 {"kind":"paragraph","text":""}
 {"kind":"bulletList","bullets":[{"text":"","level":0,"form":"noun_phrase|verb_phrase"}]}
 {"kind":"quote","text":"","attribution":""}
-{"kind":"imageRef","caption":"","source":{"text":"","url":""}}
+{"kind":"imageRef","caption":"","source":{"text":"","url":""},"assetId":"(copy through unchanged from the input if present, otherwise omit — never invent one)","description":"(copy through unchanged from the input if present)"}
 {"kind":"visual","visual":{"kind":"network_graph|flowchart|table|chart_line|chart_bar|icon_diagram","elements":[{"type":"box|icon|arrow|node|edge","label":"","color":"#7a2048","position":{"x":0,"y":0,"w":0,"h":0}}],"dataTable":{"headers":[],"rows":[],"unit":"","significantDigits":3},"chart":{"type":"line|bar","xLabel":"","yLabel":"","series":[{"name":"","points":[[0,0]]}],"annotation":""}}}`
 
 // ---------------------------------------------------------------------------

@@ -546,6 +546,19 @@ function normalizeImageRefBlock(raw: Record<string, unknown>): ImageRefBlock | n
   const block: ImageRefBlock = { kind: 'imageRef', caption }
   const source = normalizeCitation(raw.source)
   if (source) block.source = source
+  // assetId/description round-trip through refine's whole-deck JSON
+  // regeneration (buildRefineMessages/buildSlideRefineMessages in
+  // prompts.ts feed the current deck back to the LLM) — without preserving
+  // them here, a refine pass would silently drop the image-store CID
+  // reference and the vision description. No existence check against
+  // lib/imageStore.ts: a fabricated/stale assetId just resolves to null at
+  // render time and falls back to the placeholder, per that module's
+  // contract.
+  const assetId = str(raw.assetId).trim()
+  if (assetId) block.assetId = assetId
+  const description = str(raw.description).trim()
+  if (description) block.description = description
+  if (raw.fit === 'contain' || raw.fit === 'cover') block.fit = raw.fit
   return block
 }
 

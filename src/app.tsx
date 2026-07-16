@@ -4,7 +4,9 @@ import { Moon, Sun } from 'lucide-preact'
 import { useTheme } from './hooks/useTheme'
 import { t } from './i18n'
 import GenerateQueueToast from './components/GenerateQueueToast'
+import { Onboarding } from './components/Onboarding'
 import { loadDeck } from './lib/kv'
+import { markOnboardingDone, shouldShowOnboarding, subscribeOnboardingRequests } from './lib/onboarding'
 import type {
   Deck,
   SourceMaterial,
@@ -47,6 +49,16 @@ export function App() {
   // PresentTab uses this as a one-shot token so only that explicit request
   // starts playback immediately, not every visit to the tab.
   const [presentAutoStartToken, setPresentAutoStartToken] = useState(0)
+
+  // First-run wizard: shown once on a fresh install, and re-openable from the
+  // settings screen. Closing it (any path) marks onboarding done.
+  const [showOnboarding, setShowOnboarding] = useState(() => shouldShowOnboarding())
+  useEffect(() => subscribeOnboardingRequests(() => setShowOnboarding(true)), [])
+
+  function closeOnboarding() {
+    markOnboardingDone()
+    setShowOnboarding(false)
+  }
 
   // Decoupled cross-tab navigation hook: features (e.g. editor's "Present"
   // button) dispatch this instead of taking a prop-based callback, since
@@ -113,6 +125,7 @@ export function App() {
       </main>
 
       <GenerateQueueToast onOpenDeck={handleOpenGeneratedDeck} />
+      {showOnboarding && <Onboarding onClose={closeOnboarding} />}
     </div>
   )
 }

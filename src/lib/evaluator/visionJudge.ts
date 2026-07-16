@@ -52,6 +52,7 @@ Score every field 0 (bad) to 1 (good), fractional values allowed. Judge against 
 - Low text density: a slide should read as a few short structured pieces (labeled pills, boxes, a short diagram, a couple of bullets), never a dense paragraph or a long bullet list.
 - Visible structure: prefer slides that use clearly bounded shapes (pills, boxes, a diagram, a table) over plain running text — a slide that is just a title and a paragraph/long bullet list should score LOW on structureUse.
 - Overall polish: consistent, restrained color use; clear visual hierarchy (title stands out, one clear focal point); looks like a professional conference/research presentation.
+- Some slides embed a real photo/screenshot (not a placeholder box) — that is legitimate content, not a structural deficiency, and must never be penalized on structureUse for "lacking structure". For those slides, judge polish by whether the image is appropriately sized/positioned (not stretched, cropped awkwardly, or overflowing its frame) and has a proper caption.
 Respond with ONLY a single JSON object — no prose, no markdown code fences — matching exactly this shape:
 {"slides":[{"index":1,"whitespaceMargins":0,"textDensity":0,"structureUse":0,"visualPolish":0,"feedback":"one short actionable sentence"}]}`
 

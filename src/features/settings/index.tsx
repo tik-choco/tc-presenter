@@ -7,7 +7,7 @@
 // directly against lib/llmConfig.ts rather than through app.tsx).
 import { useEffect, useState } from 'preact/hooks'
 import type { JSX } from 'preact'
-import { RefreshCw } from 'lucide-preact'
+import { RefreshCw, Sparkles } from 'lucide-preact'
 import { MESSAGES_EN, MESSAGES_JA } from '@tik-choco/mistai'
 import { useConsumerConnection, useConsumerStatus, ConsumerStatusIndicator } from '@tik-choco/mistai/preact'
 import '@tik-choco/mistai/ui.css'
@@ -20,18 +20,31 @@ import {
   ensurePreset,
   ensureProvider,
   loadLlmConfig,
+  normalizeBaseUrl,
   resolvePreset,
   saveLlmConfig,
   subscribeLlmConfig,
+  type LlmProviderV1,
+  type ModelPresetV1,
   type SharedLlmConfigV1,
   type VoiceConfigV1,
 } from '../../lib/llmConfig'
 import { networkClient } from '../../lib/aiNetwork'
+import { requestOnboarding } from '../../lib/onboarding'
 import { synthesizeSpeech } from '../../lib/tts'
 import { isBrowserTtsSupported, listBrowserVoices, createBrowserSpeech } from '../../lib/browserTts'
 import { loadTtsLangRules, saveTtsLangRules, normalizeLang, type TtsEngineRule, type TtsLangRulesV1 } from '../../lib/ttsLangRules'
 import type { SettingsTabProps } from '../../types'
-import { loadNetworkEnabled, loadVisionPresetId, saveNetworkEnabled, saveVisionPresetId } from './localPrefs'
+import {
+  clampWorkerConcurrency,
+  loadGenerateRolePrefs,
+  loadNetworkEnabled,
+  loadVisionPresetId,
+  saveGenerateRolePrefs,
+  saveNetworkEnabled,
+  saveVisionPresetId,
+  type GenerateRolePrefs,
+} from './localPrefs'
 
 const OLLAMA_BASE_URL = 'http://localhost:11434/v1'
 const LM_STUDIO_BASE_URL = 'http://localhost:1234/v1'
@@ -39,6 +52,10 @@ const LM_STUDIO_BASE_URL = 'http://localhost:1234/v1'
 /** 新規プリセット作成時の既定 reasoning_effort — 思考なしで応答を速くするため "none"。
  * 空文字にすればパラメータ自体を送らない従来の挙動に戻せる(lib/llm.ts の apiConfig 参照)。 */
 const DEFAULT_REASONING_EFFORT = 'none'
+
+/** reasoning_effort の選択肢(tc-town の REASONING_EFFORT_OPTIONS と同じ並び)。
+ * 空文字(=パラメータを送らない)は選択肢とは別に「未指定」optionとして出す。 */
+const REASONING_EFFORT_OPTIONS = ['none', 'low', 'medium', 'high'] as const
 
 function cloneConfig(config: SharedLlmConfigV1): SharedLlmConfigV1 {
   return { ...config, providers: [...config.providers], presets: [...config.presets], network: { ...config.network } }
@@ -219,12 +236,20 @@ function LlmSection({ config, onChange }: LlmSectionProps) {
   const [label, setLabel] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
+  // '' = the form below adds a new provider; otherwise it edits this id in
+  // place. In-place means the id never changes, so preset.providerId
+  // references (this app's and every other tc-* app's) keep resolving.
+  const [editingProviderId, setEditingProviderId] = useState('')
 
   const [presetLabel, setPresetLabel] = useState('')
   const [presetProviderId, setPresetProviderId] = useState('')
   const [presetModel, setPresetModel] = useState('')
   const [presetTemperature, setPresetTemperature] = useState('')
   const [presetReasoningEffort, setPresetReasoningEffort] = useState(DEFAULT_REASONING_EFFORT)
+  // Same in-place contract as editingProviderId: defaultPresetId,
+  // visionPresetId, generate-role prefs and tc-town's Character.llmProfileId
+  // all reference presets by id, so editing never reissues one.
+  const [editingPresetId, setEditingPresetId] = useState('')
 
   const presetProvider = config.providers.find((p) => p.id === presetProviderId)
 
@@ -238,36 +263,86 @@ function LlmSection({ config, onChange }: LlmSectionProps) {
     }
   }
 
-  function handleAddProvider(event: JSX.TargetedEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!baseUrl.trim()) return
-    const next = cloneConfig(config)
-    ensureProvider(next, { label: label.trim() || undefined, baseUrl: baseUrl.trim(), apiKey })
-    saveLlmConfig(next)
-    onChange(next)
+  function resetProviderForm() {
     setLabel('')
     setBaseUrl('')
     setApiKey('')
+    setEditingProviderId('')
   }
 
-  function handleAddPreset(event: JSX.TargetedEvent<HTMLFormElement>) {
+  function startEditProvider(provider: LlmProviderV1) {
+    setLabel(provider.label)
+    setBaseUrl(provider.baseUrl)
+    setApiKey(provider.apiKey)
+    setEditingProviderId(provider.id)
+  }
+
+  function handleSubmitProvider(event: JSX.TargetedEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!presetProviderId || !presetModel.trim()) return
+    if (!baseUrl.trim()) return
     const next = cloneConfig(config)
-    const temperature = presetTemperature.trim() ? Number(presetTemperature.trim()) : undefined
-    ensurePreset(next, {
-      label: presetLabel.trim() || undefined,
-      providerId: presetProviderId,
-      model: presetModel.trim(),
-      temperature: temperature !== undefined && Number.isFinite(temperature) ? temperature : undefined,
-      reasoningEffort: presetReasoningEffort.trim() || undefined,
-    })
+    const editing = editingProviderId ? next.providers.find((p) => p.id === editingProviderId) : undefined
+    if (editing) {
+      // In-place edit: replace the entry's fields, keep its id. Bypasses
+      // ensureProvider on purpose — its (baseUrl, apiKey) dedupe would
+      // silently return another entry instead of applying the user's edit.
+      const normalized = normalizeBaseUrl(baseUrl)
+      next.providers = next.providers.map((p) =>
+        p.id === editingProviderId ? { ...p, label: label.trim() || normalized, baseUrl: normalized, apiKey } : p,
+      )
+    } else {
+      ensureProvider(next, { label: label.trim() || undefined, baseUrl: baseUrl.trim(), apiKey })
+    }
     saveLlmConfig(next)
     onChange(next)
+    resetProviderForm()
+  }
+
+  function resetPresetForm() {
     setPresetLabel('')
     setPresetModel('')
     setPresetTemperature('')
     setPresetReasoningEffort(DEFAULT_REASONING_EFFORT)
+    setEditingPresetId('')
+  }
+
+  function startEditPreset(preset: ModelPresetV1) {
+    setPresetLabel(preset.label)
+    setPresetProviderId(preset.providerId)
+    setPresetModel(preset.model)
+    setPresetTemperature(preset.temperature !== undefined ? String(preset.temperature) : '')
+    setPresetReasoningEffort(preset.reasoningEffort ?? '')
+    setEditingPresetId(preset.id)
+  }
+
+  function handleSubmitPreset(event: JSX.TargetedEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!presetProviderId || !presetModel.trim()) return
+    const next = cloneConfig(config)
+    const temperature = presetTemperature.trim() ? Number(presetTemperature.trim()) : undefined
+    const fields = {
+      label: presetLabel.trim() || presetModel.trim(),
+      providerId: presetProviderId,
+      model: presetModel.trim(),
+      temperature: temperature !== undefined && Number.isFinite(temperature) ? temperature : undefined,
+      reasoningEffort: presetReasoningEffort.trim() || undefined,
+    }
+    if (editingPresetId && next.presets.some((p) => p.id === editingPresetId)) {
+      // In-place edit (id preserved); optional fields are dropped when
+      // cleared, matching what ensurePreset would have stored for a new one.
+      next.presets = next.presets.map((p) => {
+        if (p.id !== editingPresetId) return p
+        const updated: ModelPresetV1 = { id: p.id, label: fields.label, providerId: fields.providerId, model: fields.model }
+        if (fields.temperature !== undefined) updated.temperature = fields.temperature
+        if (fields.reasoningEffort !== undefined) updated.reasoningEffort = fields.reasoningEffort
+        return updated
+      })
+    } else {
+      ensurePreset(next, { ...fields, label: presetLabel.trim() || undefined })
+    }
+    saveLlmConfig(next)
+    onChange(next)
+    resetPresetForm()
   }
 
   function handleSetDefault(id: string) {
@@ -294,12 +369,19 @@ function LlmSection({ config, onChange }: LlmSectionProps) {
                   <div class="set-item__label">{provider.label}</div>
                   <div class="set-item__detail">{provider.baseUrl}</div>
                 </div>
+                {editingProviderId === provider.id ? (
+                  <span class="set-badge">{t('settings.llm.editing')}</span>
+                ) : (
+                  <button type="button" class="set-btn" onClick={() => startEditProvider(provider)}>
+                    {t('settings.llm.edit')}
+                  </button>
+                )}
               </div>
             ))}
           </div>
         )}
 
-        <form onSubmit={handleAddProvider}>
+        <form onSubmit={handleSubmitProvider}>
           <div class="set-quickfill">
             <button type="button" class="set-btn" onClick={() => quickFill('ollama')}>
               {t('settings.llm.presetFillOllama')}
@@ -333,8 +415,13 @@ function LlmSection({ config, onChange }: LlmSectionProps) {
             </div>
           </div>
           <button type="submit" class="set-btn set-btn--primary" disabled={!baseUrl.trim()}>
-            {t('settings.llm.addProvider')}
+            {editingProviderId ? t('settings.llm.saveEdit') : t('settings.llm.addProvider')}
           </button>
+          {editingProviderId && (
+            <button type="button" class="set-btn" onClick={resetProviderForm}>
+              {t('common.cancel')}
+            </button>
+          )}
         </form>
       </div>
 
@@ -357,12 +444,19 @@ function LlmSection({ config, onChange }: LlmSectionProps) {
                     {t('settings.llm.setDefault')}
                   </button>
                 )}
+                {editingPresetId === preset.id ? (
+                  <span class="set-badge">{t('settings.llm.editing')}</span>
+                ) : (
+                  <button type="button" class="set-btn" onClick={() => startEditPreset(preset)}>
+                    {t('settings.llm.edit')}
+                  </button>
+                )}
               </div>
             ))}
           </div>
         )}
 
-        <form onSubmit={handleAddPreset}>
+        <form onSubmit={handleSubmitPreset}>
           <div class="set-grid">
             <div class="set-field">
               <label for="set-preset-label">{t('settings.llm.presetLabel')}</label>
@@ -410,12 +504,28 @@ function LlmSection({ config, onChange }: LlmSectionProps) {
             </div>
             <div class="set-field">
               <label for="set-preset-effort">{t('settings.llm.reasoningEffort')}</label>
-              <input
+              <select
                 id="set-preset-effort"
-                type="text"
                 value={presetReasoningEffort}
-                onInput={(e) => setPresetReasoningEffort(e.currentTarget.value)}
-              />
+                onChange={(e) => setPresetReasoningEffort(e.currentTarget.value)}
+              >
+                <option value="">{t('settings.llm.reasoningEffortNotSent')}</option>
+                {/* An edited preset may carry a value outside the standard
+                    set (hand-typed before this became a <select>) — keep it
+                    selectable instead of silently snapping to the first
+                    option, same philosophy as mergeOptions above. */}
+                {(REASONING_EFFORT_OPTIONS as readonly string[])
+                  .concat(
+                    presetReasoningEffort && !(REASONING_EFFORT_OPTIONS as readonly string[]).includes(presetReasoningEffort)
+                      ? [presetReasoningEffort]
+                      : [],
+                  )
+                  .map((effort) => (
+                    <option value={effort} key={effort}>
+                      {effort}
+                    </option>
+                  ))}
+              </select>
             </div>
           </div>
           <button
@@ -423,8 +533,13 @@ function LlmSection({ config, onChange }: LlmSectionProps) {
             class="set-btn set-btn--primary"
             disabled={config.providers.length === 0 || !presetModel.trim() || !presetProviderId}
           >
-            {t('settings.llm.addPreset')}
+            {editingPresetId ? t('settings.llm.saveEdit') : t('settings.llm.addPreset')}
           </button>
+          {editingPresetId && (
+            <button type="button" class="set-btn" onClick={resetPresetForm}>
+              {t('common.cancel')}
+            </button>
+          )}
         </form>
       </div>
     </div>
@@ -928,6 +1043,90 @@ function NetworkSection({ config, onChange }: NetworkSectionProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Generate roles (features/generate/generateDeck.ts's orchestrator/worker
+// split): which shared preset plans the deck and which one mass-produces the
+// per-segment slides, plus the worker fan-out width. Saved on change (no
+// explicit save button), same as VisionSection below; the editor's generate
+// form seeds its per-run pickers from these values.
+
+interface RolesSectionProps {
+  config: SharedLlmConfigV1
+}
+
+function RolesSection({ config }: RolesSectionProps) {
+  const [prefs, setPrefs] = useState<GenerateRolePrefs>(loadGenerateRolePrefs)
+
+  function update(patch: Partial<GenerateRolePrefs>) {
+    const next = { ...prefs, ...patch }
+    setPrefs(next)
+    saveGenerateRolePrefs(next)
+  }
+
+  // A preset that has since vanished from the shared config would render the
+  // <select> on its first option while silently keeping the stale id — keep
+  // it selectable instead, mirroring mergeOptions' philosophy for models.
+  const presetOptions = (selected: string) => {
+    const known = config.presets.map((p) => ({ id: p.id, label: p.label }))
+    if (selected && !config.presets.some((p) => p.id === selected)) known.push({ id: selected, label: selected })
+    return known
+  }
+
+  return (
+    <div class="set-panel">
+      <div class="set-panel__title">{t('settings.roles.title')}</div>
+      <p class="set-panel__hint">{t('settings.roles.hint')}</p>
+      {config.presets.length === 0 ? (
+        <div class="set-empty">{t('settings.roles.noPresets')}</div>
+      ) : (
+        <>
+          <div class="set-field">
+            <label for="set-role-orchestrator">{t('settings.roles.orchestrator')}</label>
+            <select
+              id="set-role-orchestrator"
+              value={prefs.orchestratorPresetId}
+              onChange={(e) => update({ orchestratorPresetId: e.currentTarget.value })}
+            >
+              <option value="">{t('settings.roles.orchestratorDefault')}</option>
+              {presetOptions(prefs.orchestratorPresetId).map((p) => (
+                <option value={p.id} key={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div class="set-field">
+            <label for="set-role-worker">{t('settings.roles.worker')}</label>
+            <select
+              id="set-role-worker"
+              value={prefs.workerPresetId}
+              onChange={(e) => update({ workerPresetId: e.currentTarget.value })}
+            >
+              <option value="">{t('settings.roles.workerDefault')}</option>
+              {presetOptions(prefs.workerPresetId).map((p) => (
+                <option value={p.id} key={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div class="set-field">
+            <label for="set-role-concurrency">{t('settings.roles.concurrency')}</label>
+            <input
+              id="set-role-concurrency"
+              type="number"
+              min={1}
+              max={8}
+              value={prefs.workerConcurrency}
+              onChange={(e) => update({ workerConcurrency: clampWorkerConcurrency(Number(e.currentTarget.value)) })}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Vision judge (lib/evaluator/visionJudge.ts)
 
 interface VisionSectionProps {
@@ -996,6 +1195,22 @@ function LocaleSection() {
 }
 
 // ---------------------------------------------------------------------------
+// Onboarding replay (lib/onboarding.ts + components/Onboarding.tsx)
+
+function OnboardingSection() {
+  return (
+    <div class="set-panel">
+      <div class="set-panel__title">{t('settings.onboarding.title')}</div>
+      <p class="set-panel__hint">{t('settings.onboarding.hint')}</p>
+      <button type="button" class="set-btn set-btn--primary" onClick={() => requestOnboarding()}>
+        <Sparkles size={14} />
+        {t('settings.onboarding.open')}
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 
 export default function SettingsTab(_props: SettingsTabProps) {
   const [config, setConfig] = useState<SharedLlmConfigV1>(() => loadLlmConfig() ?? emptyLlmConfig())
@@ -1005,11 +1220,13 @@ export default function SettingsTab(_props: SettingsTabProps) {
   return (
     <div class="set-tab">
       <LlmSection config={config} onChange={setConfig} />
+      <RolesSection config={config} />
       <VisionSection config={config} />
       <TtsSection config={config} onChange={setConfig} />
       <TtsLangSection config={config} />
       <NetworkSection config={config} onChange={setConfig} />
       <LocaleSection />
+      <OnboardingSection />
     </div>
   )
 }

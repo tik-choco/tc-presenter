@@ -32,7 +32,7 @@
   box-shadow: var(--shadow-3);
   display: flex;
   flex-direction: column;
-  padding: 56px 64px 48px;
+  padding: 64px 80px 56px;
 }
 
 /* ---- Badge (①②③ layer indicator) --------------------------------- */
@@ -91,7 +91,7 @@
   align-items: center;
   gap: 16px;
   min-height: 40px;
-  margin-bottom: 36px;
+  margin-bottom: 42px;
   padding-top: 4px;
 }
 
@@ -104,6 +104,21 @@
 }
 
 /* ---- Content area ---------------------------------------------------- */
+
+/* Auto-fit wrapper (SlideView.tsx): sits between the header and
+   .slide-content/.block-stack so overflowing content can be measured
+   (scrollHeight vs the flex-allocated clientHeight) and scaled down via a
+   directly-applied `transform: scale()` rather than clipping at the bottom
+   of the fixed canvas. transform-origin anchors the shrink to the top so
+   the header/title never moves. */
+.slide-fit {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform-origin: top center;
+}
 
 .slide-content {
   flex: 1;
@@ -322,9 +337,9 @@
   justify-content: center;
   text-align: left;
   gap: 18px;
-  margin: -56px -64px -48px;
-  padding: 56px 88px;
-  padding-bottom: 96px;
+  margin: -64px -80px -56px;
+  padding: 64px 96px;
+  padding-bottom: 100px;
   background: var(--slide-primary, var(--primary));
   color: #fff;
 }
@@ -628,6 +643,18 @@
   flex: 0 0 auto;
 }
 
+/* Large centered takeaway sentence closing a diagram-heavy slide — see the
+   lastIsConclusion detection in BlockStack (Blocks.tsx). */
+.block-stack__full--conclusion .block-paragraph {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--slide-primary, var(--primary));
+  max-width: 880px;
+  margin: 0 auto;
+}
+
 .block-stack__columns {
   flex: 0 0 auto;
   display: flex;
@@ -873,9 +900,34 @@
   padding-left: calc(var(--depth, 0) * 0px);
 }
 
+/* Curved connector into each top-level branch node, echoing the reference
+   deck's converging mindmap connectors: a quarter-circle bend (border-radius
+   on adjoining border edges) instead of a flat vertical line. Anchored near
+   the pill node's own vertical center (a fixed height, not 50% of the whole
+   branch box) so it still lines up reasonably once a branch grows taller
+   with children stacked below it. Consecutive branches' curves overlap
+   through the negative top offset — matching .block-mindmap__branches' own
+   gap — so together they read as one continuous spine bending out into each
+   node rather than N disconnected ticks. */
 .block-mindmap__branch[data-depth='0'] {
+  padding-left: 26px;
+}
+
+.block-mindmap__branch[data-depth='0']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -14px;
+  width: 20px;
+  height: 38px;
   border-left: 2px solid var(--slide-gray, var(--border-strong));
-  padding-left: 18px;
+  border-bottom: 2px solid var(--slide-gray, var(--border-strong));
+  border-bottom-left-radius: 16px;
+}
+
+.block-mindmap__branch[data-depth='0']:first-child::before {
+  top: 10px;
+  height: 14px;
 }
 
 .block-mindmap__node {
@@ -887,11 +939,6 @@
   flex-wrap: wrap;
   gap: 8px;
   padding-left: 24px;
-}
-
-.block-mindmap__children .block-mindmap__branch {
-  border-left: none;
-  padding-left: 0;
 }
 
 /* ---- F. flow --------------------------------------------------------------- */
@@ -946,6 +993,26 @@
   border-left: 16px solid var(--slide-primary, var(--primary));
 }
 
+/* Curved horizontal connector — see FlowConnector() in Blocks.tsx. */
+.block-flow__connector {
+  width: 52px;
+  height: 24px;
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+.block-flow__connector path {
+  fill: none;
+  stroke: var(--slide-primary, var(--primary));
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.block-flow__connector-head {
+  fill: var(--slide-primary, var(--primary));
+  stroke: none;
+}
+
 .block-flow__step {
   font-size: 22px;
   padding: 14px 28px;
@@ -963,10 +1030,10 @@
 .block-comparison__side {
   flex: 1;
   min-width: 0;
-  padding: 8px 28px;
+  padding: 12px 32px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .block-comparison__side + .block-comparison__side {
@@ -1085,7 +1152,7 @@
 
 .block-callout {
   flex: 0 0 auto;
-  padding: 20px 26px;
+  padding: 24px 30px;
   border-radius: var(--radius-m);
   border: 2px solid var(--slide-secondary, var(--secondary));
   background: var(--surface-2);
@@ -1155,6 +1222,7 @@
 .block-imageref {
   flex: 1;
   min-height: 0;
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1174,6 +1242,31 @@
   font-weight: 600;
   text-align: center;
   padding: 16px;
+}
+
+.block-imageref__img {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--slide-gray, var(--border-strong));
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+}
+
+.block-imageref__img[data-fit='contain'] {
+  object-fit: contain;
+}
+
+.block-imageref__img[data-fit='cover'] {
+  object-fit: cover;
+}
+
+.block-imageref__caption {
+  margin: 0;
+  font-size: 14px;
+  color: var(--slide-gray, var(--text-subtle));
+  text-align: center;
 }
 
 .block-imageref__source {

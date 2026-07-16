@@ -12,11 +12,18 @@
 // vs full-screen) without a second unit system (container queries etc).
 import { Check, ChevronRight, Quote } from 'lucide-preact'
 import type { JSX } from 'preact'
+import { useLayoutEffect, useRef } from 'preact/hooks'
 import { t } from '../../i18n'
 import type { DeckTheme, Slide, SlideBullet } from '../../types'
 import { BlockStack } from './Blocks'
 import './slides.css'
 import { SlideVisualBlock } from './SlideVisual'
+
+/** Minimum scale the auto-fit below will shrink content to before giving up
+ * and letting it clip — smaller than this and text becomes unreadable, so an
+ * overflowing slide is a content/generation problem to fix upstream, not
+ * something this renderer should paper over indefinitely. */
+const MIN_FIT_SCALE = 0.6
 
 export interface SlideViewProps {
   slide: Slide
@@ -195,6 +202,31 @@ export function SlideView({ slide, theme, scale = 1, pageTotal, buildStageTotal 
   const width = 1280
   const height = theme.aspectRatio === '4:3' ? Math.round((width * 3) / 4) : Math.round((width * 9) / 16)
   const palette = theme.colorPalette
+  const fitRef = useRef<HTMLDivElement>(null)
+
+  // Shrink overflowing content to fit the fixed canvas instead of letting it
+  // clip at the bottom. Applied via direct DOM mutation (not state) so it
+  // lands synchronously within this layout effect: visionRender.tsx rasterizes
+  // an offscreen mount after a single rAF, and a setState-driven re-render
+  // isn't guaranteed to have committed and painted by then.
+  //
+  // .slide-fit sits between the header and the content (.slide-content /
+  // .block-stack), both of which already use flex:1 + min-height:0 to be
+  // sized by the surrounding flex column rather than by their own content.
+  // That makes scrollHeight (the content's true intrinsic extent, unaffected
+  // by clipping) reliably comparable to clientHeight (the space flexbox
+  // actually granted) — a mismatch means the content needs to shrink.
+  useLayoutEffect(() => {
+    const el = fitRef.current
+    if (!el) return
+    const overflow = el.scrollHeight - el.clientHeight
+    if (overflow > 1 && el.clientHeight > 0) {
+      const ratio = Math.max(MIN_FIT_SCALE, Math.min(1, el.clientHeight / el.scrollHeight))
+      el.style.transform = `scale(${ratio})`
+    } else {
+      el.style.transform = ''
+    }
+  }, [slide, height, theme.fontFamily])
 
   const canvasStyle: JSX.CSSProperties = {
     width: `${width}px`,
@@ -242,7 +274,9 @@ export function SlideView({ slide, theme, scale = 1, pageTotal, buildStageTotal 
               )}
               <h1 class="slide-title">{slide.title.text || t('slide.untitled')}</h1>
             </header>
-            {hasBlocks ? <BlockStack blocks={slide.blocks!} /> : <SlideBody slide={slide} />}
+            <div class="slide-fit" ref={fitRef}>
+              {hasBlocks ? <BlockStack blocks={slide.blocks!} /> : <SlideBody slide={slide} />}
+            </div>
           </>
         )}
 
