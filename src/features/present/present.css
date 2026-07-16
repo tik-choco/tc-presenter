@@ -162,6 +162,11 @@
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   flex-wrap: wrap;
   animation: rise-in var(--dur-med) var(--ease-out);
+  /* SlideGridOverlay sits at z-index 6 and absolutely covers the whole
+     stage — stack the control bar above it so it stays clickable while
+     the grid is open. */
+  position: relative;
+  z-index: 7;
 }
 
 .present-controls__btn {
@@ -258,4 +263,138 @@
   .present-controls__speed {
     display: none;
   }
+}
+
+.present-controls__status {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  white-space: nowrap;
+}
+
+/* ============================================================
+   Presenter-tool layout — shown instead of .present-stage__slide
+   while a stage window (StageWindow.tsx, ?window=stage) is
+   connected. The audience sees the slide over there; this window
+   shows current + next slide plus speaker notes for the presenter.
+   ============================================================ */
+
+.present-tool {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 16px;
+  padding: 20px;
+}
+
+.present-tool__current {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.present-tool__next {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.present-tool__label {
+  flex: 0 0 auto;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.present-tool__canvas {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+
+.present-tool__next-end {
+  padding: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.present-tool__notes {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-m);
+}
+
+.present-tool__notes-title {
+  flex: 0 0 auto;
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.present-tool__notes-body {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  overflow-y: auto;
+  font-size: 19px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+@media (max-width: 900px) {
+  .present-tool {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(200px, 2fr) minmax(120px, 1fr) minmax(120px, 1fr);
+  }
+
+  .present-tool__current {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .present-tool__next {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .present-tool__notes {
+    grid-column: 1;
+    grid-row: 3;
+  }
+}
+
+/* ============================================================
+   Slide-overview grid overlay (SlideGridOverlay.tsx, Q&A jump).
+   ============================================================ */
+
+/* Keeps the last grid row from hiding under the control bar. */
+.present-stage > .slide-grid-overlay {
+  padding-bottom: 96px;
 }

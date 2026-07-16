@@ -21,7 +21,7 @@
 // restarts a slide's narration from zero, and manual prev/next during
 // playback naturally continues playing the next slide (no special-casing
 // needed) since both effects just react to whichever state changed.
-import { Captions, Maximize2, Minimize2, Pause, Play, SkipBack, SkipForward, X } from 'lucide-preact'
+import { Captions, LayoutGrid, Maximize2, Minimize2, MonitorUp, MonitorX, Pause, Play, SkipBack, SkipForward, X } from 'lucide-preact'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { lazy, Suspense } from 'preact/compat'
 import type { ComponentType } from 'preact/compat'
@@ -31,10 +31,12 @@ import { type BrowserSpeechHandle, createBrowserSpeech, isBrowserTtsSupported } 
 import { loadLlmConfig } from '../../lib/llmConfig'
 import { synthesizeSpeech } from '../../lib/tts'
 import { loadCaptionsEnabled, saveCaptionsEnabled } from '../settings/localPrefs'
+import { SlideGridOverlay } from './SlideGridOverlay'
 import type { PresentPlayerProps } from '../../types'
 import { loadPresenterCharacterSettings } from '../../vrm/characterSettings'
 import type { PresenterCharacterProps } from '../../vrm/PresenterCharacter'
 import './present.css'
+import { createPresenterEndpoint, openStageWindow, type PresenterEndpoint, type StageState } from './stageSync'
 import { resolveNarrationTarget, type ResolvedNarrationTarget } from './ttsTarget'
 
 // Dynamically imported so three.js (PresenterCharacter.tsx + vrm/loader.ts +
@@ -127,6 +129,16 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   const [scale, setScale] = useState(1)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showCaptions, setShowCaptions] = useState<boolean>(() => loadCaptionsEnabled())
+  const [gridVisible, setGridVisible] = useState(false)
+
+  // Presenter-tool / stage-window sync (stageSync.ts). `stageOpen` covers
+  // both "we opened it and it's still open" and "a stage window said hello"
+  // (e.g. the presenter reloaded but an already-open stage reconnected) —
+  // only the former has a live `stageWindowRef` to close directly.
+  const [stageOpen, setStageOpen] = useState(false)
+  const [stagePopupBlocked, setStagePopupBlocked] = useState(false)
+  const presenterEndpointRef = useRef<PresenterEndpoint | null>(null)
+  const stageWindowRef = useRef<Window | null>(null)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -158,6 +170,94 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   useEffect(() => {
     fallbackCpsRef.current = fallbackCps
   }, [fallbackCps])
+  const showCaptionsRef = useRef(showCaptions)
+  useEffect(() => {
+    showCaptionsRef.current = showCaptions
+  }, [showCaptions])
+  const gridVisibleRef = useRef(gridVisible)
+  useEffect(() => {
+    gridVisibleRef.current = gridVisible
+  }, [gridVisible])
+  // Synced further down, once buildStageTotal/speaking are computed — kept
+  // as refs (rather than reading state directly) so buildStageState() below
+  // never closes over a stale value from whichever render created it.
+  const buildStageTotalRef = useRef<number | undefined>(undefined)
+  const speakingRef = useRef(false)
+
+  const buildStageState = useCallback(
+    (): StageState => ({
+      deck: deckRef.current,
+      currentIndex: currentIndexRef.current,
+      buildStageTotal: buildStageTotalRef.current,
+      showCaptions: showCaptionsRef.current,
+      speaking: speakingRef.current,
+      gridVisible: gridVisibleRef.current,
+    }),
+    [],
+  )
+
+  // Create the presenter endpoint once per mount. `onHello` fires whenever a
+  // stage window (re)connects — including a stage that was already open
+  // before this window (re)loaded — so publish the current snapshot back.
+  useEffect(() => {
+    const endpoint = createPresenterEndpoint(() => {
+      setStageOpen(true)
+      endpoint.publish(buildStageState())
+    })
+    presenterEndpointRef.current = endpoint
+    return () => {
+      endpoint.end()
+      endpoint.close()
+      presenterEndpointRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // window.open() gives no event for the user closing the popup themselves,
+  // so poll the held reference to detect it.
+  useEffect(() => {
+    const iv = window.setInterval(() => {
+      const win = stageWindowRef.current
+      if (win?.closed) {
+        stageWindowRef.current = null
+        setStageOpen(false)
+      }
+    }, 1000)
+    return () => window.clearInterval(iv)
+  }, [])
+
+  // Transient popup-blocked notice, auto-dismissed like the narration notices below.
+  useEffect(() => {
+    if (!stagePopupBlocked) return
+    const id = window.setTimeout(() => setStagePopupBlocked(false), 4000)
+    return () => window.clearTimeout(id)
+  }, [stagePopupBlocked])
+
+  const toggleStage = useCallback(() => {
+    if (stageOpen) {
+      if (stageWindowRef.current) {
+        stageWindowRef.current.close()
+        stageWindowRef.current = null
+      } else {
+        // Connected via `hello` with no Window ref held (e.g. this window
+        // reloaded) — the best we can do is tell it the show is over.
+        presenterEndpointRef.current?.end()
+      }
+      setStageOpen(false)
+      return
+    }
+    const win = openStageWindow()
+    if (!win) {
+      setStagePopupBlocked(true)
+      return
+    }
+    stageWindowRef.current = win
+    setStageOpen(true)
+    // Covers reusing an already-open (possibly already-`end()`ed) window via
+    // the shared window name — `hello` only fires on load/reload, not on a
+    // window.open() refocus of an existing window.
+    presenterEndpointRef.current?.publish(buildStageState())
+  }, [stageOpen, buildStageState])
 
   // Resolved once at mount — a mounted player's TTS target doesn't change
   // mid-presentation even if Settings is edited in another tab.
@@ -416,7 +516,28 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
     const ro = new ResizeObserver(compute)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [baseHeight])
+    // stageOpen is a dep because it swaps which DOM node stageRef points at
+    // (fullscreen audience view vs. the presenter-tool current-slide panel).
+  }, [baseHeight, stageOpen])
+
+  // Same fit-to-container logic for the next-slide preview panel, only
+  // mounted while the presenter tool is showing.
+  const nextStageRef = useRef<HTMLDivElement>(null)
+  const [nextScale, setNextScale] = useState(1)
+  useEffect(() => {
+    if (!stageOpen) return
+    const el = nextStageRef.current
+    if (!el) return
+    const compute = () => {
+      const rect = el.getBoundingClientRect()
+      const s = Math.min(rect.width / BASE_WIDTH, rect.height / baseHeight)
+      setNextScale(s > 0 && Number.isFinite(s) ? s : 1)
+    }
+    compute()
+    const ro = new ResizeObserver(compute)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [baseHeight, stageOpen])
 
   // Best-effort fullscreen — some browsers require the request to originate
   // from a direct user gesture; opening the Present tab is one, but if it's
@@ -448,7 +569,17 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
     })
   }, [])
 
-  // Keyboard: space=play/pause, arrows=prev/next, c=captions, Esc=exit.
+  // Opening the grid pauses playback (it's for Q&A, browsing while narration
+  // keeps advancing would be confusing) — closing it leaves play state alone.
+  const toggleGrid = useCallback(() => {
+    setGridVisible((v) => {
+      const next = !v
+      if (next) setIsPlaying(false)
+      return next
+    })
+  }, [])
+
+  // Keyboard: space=play/pause, arrows=prev/next, c=captions, g=grid, Esc=exit (closes grid first if open).
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement | null)?.tagName
@@ -462,13 +593,16 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
         goPrev()
       } else if (e.key === 'c' || e.key === 'C') {
         toggleCaptions()
+      } else if (e.key === 'g' || e.key === 'G') {
+        toggleGrid()
       } else if (e.key === 'Escape') {
-        onExit()
+        if (gridVisibleRef.current) setGridVisible(false)
+        else onExit()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [goNext, goPrev, onExit, toggleCaptions])
+  }, [goNext, goPrev, onExit, toggleCaptions, toggleGrid])
 
   const handleFallbackCpsChange = useCallback((value: number) => {
     if (!Number.isFinite(value)) return
@@ -493,6 +627,27 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   // or a playing <audio>. Loading/paused/between-slides all read as false.
   const speaking = isPlaying && !isLoading
 
+  const nextSlide = deck.slides[currentIndex + 1]
+  const nextBuildStageTotal = useMemo(() => {
+    if (!nextSlide?.buildStage.isBuildSlide || !nextSlide.buildStage.groupId) return undefined
+    const groupId = nextSlide.buildStage.groupId
+    return deck.slides.filter((s) => s.buildStage.groupId === groupId).length
+  }, [nextSlide, deck.slides])
+
+  useEffect(() => {
+    buildStageTotalRef.current = buildStageTotal
+  }, [buildStageTotal])
+  useEffect(() => {
+    speakingRef.current = speaking
+  }, [speaking])
+
+  // Broadcast a full snapshot to the stage window whenever anything it
+  // renders changes. Full snapshots (not deltas) keep the protocol
+  // self-healing per stageSync.ts's design notes.
+  useEffect(() => {
+    presenterEndpointRef.current?.publish({ deck, currentIndex, buildStageTotal, showCaptions, speaking, gridVisible })
+  }, [deck, currentIndex, buildStageTotal, showCaptions, speaking, gridVisible])
+
   if (deck.slides.length === 0 || !slide) {
     return (
       <div class="present-stage" ref={containerRef}>
@@ -508,21 +663,76 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
 
   return (
     <div class="present-stage" ref={containerRef}>
-      <div class="present-stage__slide" ref={stageRef}>
-        <SlideView slide={slide} theme={deck.theme} scale={scale} pageTotal={deck.slides.length} buildStageTotal={buildStageTotal} />
-        {isLoading && <div class="present-loading" aria-hidden="true" />}
-        {characterSettings.enabled && characterSettings.selected && (
-          <div
-            class={`present-character present-character--${characterSettings.position} present-character--${characterSettings.size}`}
-          >
-            <Suspense fallback={null}>
-              <PresenterCharacter vrmRef={characterSettings.selected} speaking={speaking} framing="upper" />
-            </Suspense>
+      {stageOpen ? (
+        // Presenter-tool layout: the audience sees the slide via the stage
+        // window (StageWindow.tsx), so this window shows current + next +
+        // notes instead. The presenter character is skipped here too — the
+        // stage window owns the audience-facing lip-sync display.
+        <div class="present-tool">
+          <div class="present-tool__current">
+            <span class="present-tool__label">{t('present.currentPreview')}</span>
+            <div class="present-tool__canvas" ref={stageRef}>
+              <SlideView
+                slide={slide}
+                theme={deck.theme}
+                scale={scale}
+                pageTotal={deck.slides.length}
+                buildStageTotal={buildStageTotal}
+              />
+              {isLoading && <div class="present-loading" aria-hidden="true" />}
+            </div>
           </div>
-        )}
-      </div>
+          <div class="present-tool__next">
+            <span class="present-tool__label">{t('present.nextPreview')}</span>
+            <div class="present-tool__canvas present-tool__canvas--next" ref={nextStageRef}>
+              {nextSlide ? (
+                <SlideView
+                  slide={nextSlide}
+                  theme={deck.theme}
+                  scale={nextScale}
+                  pageTotal={deck.slides.length}
+                  buildStageTotal={nextBuildStageTotal}
+                />
+              ) : (
+                <span class="present-tool__next-end">{t('present.nextPreviewEnd')}</span>
+              )}
+            </div>
+          </div>
+          <div class="present-tool__notes">
+            <h3 class="present-tool__notes-title">{t('present.notesTitle')}</h3>
+            <p class="present-tool__notes-body">{slide.speakerNotes.trim() || t('present.notesEmpty')}</p>
+          </div>
+        </div>
+      ) : (
+        <div class="present-stage__slide" ref={stageRef}>
+          <SlideView slide={slide} theme={deck.theme} scale={scale} pageTotal={deck.slides.length} buildStageTotal={buildStageTotal} />
+          {isLoading && <div class="present-loading" aria-hidden="true" />}
+          {characterSettings.enabled && characterSettings.selected && (
+            <div
+              class={`present-character present-character--${characterSettings.position} present-character--${characterSettings.size}`}
+            >
+              <Suspense fallback={null}>
+                <PresenterCharacter vrmRef={characterSettings.selected} speaking={speaking} framing="upper" />
+              </Suspense>
+            </div>
+          )}
+        </div>
+      )}
 
-      {noticeText && <div class="present-notice">{noticeText}</div>}
+      {gridVisible && (
+        <SlideGridOverlay
+          deck={deck}
+          currentIndex={currentIndex}
+          onSelect={(i) => {
+            setCurrentIndex(i)
+            setGridVisible(false)
+          }}
+        />
+      )}
+
+      {(stagePopupBlocked || noticeText) && (
+        <div class="present-notice">{stagePopupBlocked ? t('present.stagePopupBlocked') : noticeText}</div>
+      )}
 
       {showCaptions && slide.speakerNotes.trim() && <div class="present-captions">{slide.speakerNotes.trim()}</div>}
 
@@ -585,6 +795,16 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
 
         <button
           type="button"
+          class={`present-controls__btn${gridVisible ? ' present-controls__btn--active' : ''}`}
+          onClick={toggleGrid}
+          aria-pressed={gridVisible}
+          aria-label={t('present.gridToggle')}
+          title={t('present.gridToggle')}
+        >
+          <LayoutGrid size={18} />
+        </button>
+        <button
+          type="button"
           class={`present-controls__btn${showCaptions ? ' present-controls__btn--active' : ''}`}
           onClick={toggleCaptions}
           aria-pressed={showCaptions}
@@ -593,6 +813,17 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
         >
           <Captions size={18} />
         </button>
+        <button
+          type="button"
+          class={`present-controls__btn${stageOpen ? ' present-controls__btn--active' : ''}`}
+          onClick={toggleStage}
+          aria-pressed={stageOpen}
+          aria-label={stageOpen ? t('present.closeStage') : t('present.openStage')}
+          title={stageOpen ? t('present.closeStage') : t('present.openStage')}
+        >
+          {stageOpen ? <MonitorX size={18} /> : <MonitorUp size={18} />}
+        </button>
+        {stageOpen && <span class="present-controls__status">{t('present.stageConnected')}</span>}
         <button
           type="button"
           class="present-controls__btn"

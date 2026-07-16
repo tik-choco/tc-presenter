@@ -280,6 +280,17 @@ const en = {
   'present.captionsToggle': 'Toggle captions (C)',
   'present.notesEmpty': 'This slide has no speaker notes.',
   'present.ended': 'End of presentation.',
+  'present.openStage': 'Open audience window',
+  'present.closeStage': 'Close audience window',
+  'present.stageConnected': 'Audience window open',
+  'present.stagePopupBlocked': 'Could not open the audience window — please allow pop-ups for this site.',
+  'present.stageWaiting': 'Waiting for the presenter window…',
+  'present.notesTitle': 'Speaker notes',
+  'present.currentPreview': 'Current slide',
+  'present.nextPreview': 'Next slide',
+  'present.nextPreviewEnd': 'End of deck',
+  'present.gridToggle': 'Toggle slide overview (G)',
+  'present.gridJump': 'Go to slide {n}',
 
   // ---- Presenter character (vrm/CharacterManager.tsx, vrm/PresenterCharacter.tsx) ----
   'present.character.title': 'Presenter character',

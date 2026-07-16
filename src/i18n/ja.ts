@@ -282,6 +282,17 @@ const ja: Partial<Record<TranslationKey, string>> = {
   'present.captionsToggle': '字幕の表示を切り替え (C)',
   'present.notesEmpty': 'このスライドにはスピーカーノートがありません。',
   'present.ended': '発表が終了しました。',
+  'present.openStage': '発表画面を開く',
+  'present.closeStage': '発表画面を閉じる',
+  'present.stageConnected': '発表画面に接続中',
+  'present.stagePopupBlocked': '発表画面を開けませんでした — このサイトのポップアップを許可してください。',
+  'present.stageWaiting': '発表者ウィンドウからの接続を待っています…',
+  'present.notesTitle': 'スピーカーノート',
+  'present.currentPreview': '現在のスライド',
+  'present.nextPreview': '次のスライド',
+  'present.nextPreviewEnd': '最後のスライドです',
+  'present.gridToggle': 'スライド一覧を切り替え (G)',
+  'present.gridJump': 'スライド {n} へ移動',
 
   // ---- 発表者キャラクター(vrm/CharacterManager.tsx, vrm/PresenterCharacter.tsx) ----
   'present.character.title': '発表者キャラクター',

@@ -51,7 +51,17 @@ export async function renderSlideToPng(
     const canvasEl = host.querySelector<HTMLElement>('.slide-canvas')
     if (!canvasEl) return null
 
-    return await toPng(canvasEl, { pixelRatio, cacheBust: true, backgroundColor: theme.colorPalette?.background })
+    // On screen `.slide-canvas` is a card floating on a page background, so
+    // its rounded corners/shadow (slides.css) look correct. Here it fills
+    // the entire rasterized frame, so those rounded corners would just clip
+    // to transparent (or white, once re-encoded to JPEG) pixels in every
+    // exported PNG/PDF/PPTX/video frame — flatten them for the capture only.
+    return await toPng(canvasEl, {
+      pixelRatio,
+      cacheBust: true,
+      backgroundColor: theme.colorPalette?.background,
+      style: { borderRadius: '0', boxShadow: 'none' },
+    })
   } catch {
     return null
   } finally {

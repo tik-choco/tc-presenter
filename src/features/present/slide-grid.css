@@ -1,0 +1,105 @@
+/* ============================================================
+   SlideGridOverlay — Q&A slide-overview grid (SlideGridOverlay.tsx).
+   Shared by PresentPlayer (interactive, onSelect jumps to a slide)
+   and StageWindow (read-only mirror of the same StageState.gridVisible
+   flag). Visual language mirrors present.css/stage-window.css so the
+   grid reads as part of the same stage, just an overlay on top of it.
+   ============================================================ */
+
+.slide-grid-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: rgba(13, 10, 12, 0.96);
+  /* Flex + margin:auto on the grid centers it both ways when it fits the
+     screen (the usual fit-to-screen case) without cutting off the top edge
+     when the clamped fallback overflows and scrolls. */
+  display: flex;
+  overflow-y: auto;
+  padding: 24px;
+  animation: slide-grid-fade-in var(--dur-med) var(--ease-out);
+}
+
+.slide-grid {
+  display: grid;
+  /* Column count/width are computed per-container by SlideGridOverlay.tsx
+     (fit-to-screen) and set as an inline style; GRID_GAP there must match
+     this gap. */
+  gap: 16px;
+  margin: auto;
+}
+
+.slide-grid__item {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  position: relative;
+  border-radius: var(--radius-m);
+  overflow: hidden;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+  animation: slide-grid-rise-in var(--dur-med) var(--ease-out);
+}
+
+.slide-grid__item--current {
+  outline-color: var(--primary);
+}
+
+button.slide-grid__item {
+  cursor: pointer;
+}
+
+button.slide-grid__item:hover {
+  outline-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-2px);
+}
+
+button.slide-grid__item--current:hover {
+  outline-color: var(--primary-hover);
+}
+
+.slide-grid__thumb {
+  width: 100%;
+  pointer-events: none;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.slide-grid__num {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+@keyframes slide-grid-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-grid-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
