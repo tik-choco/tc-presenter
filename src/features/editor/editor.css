@@ -17,6 +17,7 @@
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-1);
   padding: 18px 20px;
+  animation: rise-in var(--dur-slow) var(--ease-out) backwards;
 }
 
 .edt-panel__header {
@@ -46,6 +47,7 @@
   font-size: 13px;
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-m);
+  animation: fade-in var(--dur-med) var(--ease-out) backwards;
 }
 
 .edt-deck-list {
@@ -62,6 +64,37 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-m);
   background: var(--surface-2);
+  transition: box-shadow var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  animation: rise-in var(--dur-med) var(--ease-out) backwards;
+}
+
+.edt-deck-item:hover {
+  box-shadow: var(--shadow-1);
+  border-color: var(--border-strong);
+}
+
+.edt-deck-item:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.edt-deck-item:nth-child(2) {
+  animation-delay: 40ms;
+}
+
+.edt-deck-item:nth-child(3) {
+  animation-delay: 80ms;
+}
+
+.edt-deck-item:nth-child(4) {
+  animation-delay: 120ms;
+}
+
+.edt-deck-item:nth-child(5) {
+  animation-delay: 160ms;
+}
+
+.edt-deck-item:nth-child(n + 6) {
+  animation-delay: 200ms;
 }
 
 .edt-deck-item__main {
@@ -95,7 +128,8 @@
   border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 600;
-  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
 .edt-btn__spinner {
@@ -114,6 +148,11 @@
 .edt-btn:hover {
   border-color: var(--primary-border);
   background: var(--primary-soft);
+  transform: translateY(-1px);
+}
+
+.edt-btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .edt-btn--primary {
@@ -124,6 +163,7 @@
 
 .edt-btn--primary:hover {
   background: var(--primary-hover);
+  box-shadow: var(--shadow-1);
 }
 
 .edt-btn--danger:hover {
@@ -161,6 +201,7 @@
   padding: 8px 10px;
   font-size: 13px;
   resize: vertical;
+  transition: border-color var(--dur-fast) var(--ease);
 }
 
 .edt-field input:not([type='checkbox']):focus-visible,
@@ -202,10 +243,15 @@
   font-size: 13px;
   padding: 4px 6px;
   border-radius: var(--radius-s);
+  transition: background-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 
 .edt-source-item:hover {
   background: var(--surface-3);
+}
+
+.edt-source-item:active {
+  transform: scale(0.99);
 }
 
 .edt-advanced-toggle {
@@ -217,6 +263,15 @@
   font-weight: 700;
   padding: 4px 0;
   margin-bottom: 8px;
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.edt-advanced-toggle:hover {
+  opacity: 0.75;
+}
+
+.edt-advanced-toggle:active {
+  transform: scale(0.97);
 }
 
 .edt-progress {
@@ -247,12 +302,14 @@
   font-size: 13px;
   color: var(--danger-text);
   margin-top: 10px;
+  animation: fade-in var(--dur-med) var(--ease-out) backwards;
 }
 
 .edt-score {
   margin-top: 14px;
   border-top: 1px solid var(--border);
   padding-top: 14px;
+  animation: fade-in var(--dur-slow) var(--ease-out) backwards;
 }
 
 .edt-score__total {
@@ -269,6 +326,7 @@
   font-weight: 700;
   padding: 2px 9px;
   border-radius: var(--radius-pill);
+  animation: scale-in var(--dur-med) var(--ease-spring) backwards;
 }
 
 .edt-score__gate--pass {
@@ -341,6 +399,7 @@
   font-size: 12px;
   color: var(--success-text);
   margin-top: 6px;
+  animation: fade-in var(--dur-med) var(--ease-out) backwards;
 }
 
 .edt-slide-list {
@@ -357,6 +416,27 @@
   display: flex;
   gap: 16px;
   flex-wrap: wrap;
+  animation: rise-in var(--dur-slow) var(--ease-out) backwards;
+}
+
+.edt-slide:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.edt-slide:nth-child(2) {
+  animation-delay: 40ms;
+}
+
+.edt-slide:nth-child(3) {
+  animation-delay: 80ms;
+}
+
+.edt-slide:nth-child(4) {
+  animation-delay: 120ms;
+}
+
+.edt-slide:nth-child(n + 5) {
+  animation-delay: 160ms;
 }
 
 .edt-slide__preview {
@@ -446,18 +526,7 @@
   border-radius: var(--radius-s);
   background: var(--surface);
   border: 1px solid var(--border);
-  animation: edt-live-in 0.25s var(--ease-out);
-}
-
-@keyframes edt-live-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  animation: rise-in var(--dur-med) var(--ease-out) backwards;
 }
 
 .edt-live-slide--pending {

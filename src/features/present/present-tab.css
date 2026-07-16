@@ -6,6 +6,7 @@
 
 .present-tab__empty {
   text-align: center;
+  animation: fade-in var(--dur-med) var(--ease-out);
 }
 
 .present-tab__ready {
@@ -27,6 +28,7 @@
   background: var(--surface);
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-1);
+  animation: rise-in var(--dur-slow) var(--ease-out);
 }
 
 .present-tab__ready-title {
@@ -61,6 +63,10 @@
 .present-tab__start:hover {
   background: var(--primary-hover);
   transform: translateY(-1px);
+}
+
+.present-tab__start:active {
+  transform: scale(0.97);
 }
 
 /* Presenter-character panel (vrm/CharacterManager.tsx), stacked below either

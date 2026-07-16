@@ -5,6 +5,9 @@
 .presenter-character {
   width: 100%;
   height: 100%;
+  /* Opacity-only entrance — never a transform here, this wraps the WebGL
+     canvas and a transform would force it to repaint every frame. */
+  animation: fade-in var(--dur-med) var(--ease-out);
 }
 
 .presenter-character__canvas {

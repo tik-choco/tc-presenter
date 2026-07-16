@@ -12,6 +12,10 @@
    a theme field is missing.
    ============================================================ */
 
+/* Keep this wrap animation-free: it renders in the present stage and in
+   visionRender/pdf/pptx offscreen rasterization, where an entrance
+   animation would be captured mid-flight. Entrance/hover polish belongs
+   to the surrounding context (e.g. editor's .edt-slide). */
 .slide-scale-wrap {
   position: relative;
   overflow: hidden;

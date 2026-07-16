@@ -126,13 +126,34 @@ export default function GenerateQueueToast({ onOpenDeck }: GenerateQueueToastPro
     }
   }, [])
 
-  if (jobs.length === 0 && resumables.length === 0 && exportJobs.length === 0) return null
+  const isEmpty = jobs.length === 0 && resumables.length === 0 && exportJobs.length === 0
+
+  // Keep the toast mounted for one gqt-out cycle after the queues empty out,
+  // so it slides/fades away instead of vanishing instantly.
+  const [phase, setPhase] = useState<'visible' | 'closing' | 'hidden'>(isEmpty ? 'hidden' : 'visible')
+
+  useEffect(() => {
+    if (isEmpty) {
+      setPhase((p) => (p === 'visible' ? 'closing' : p))
+    } else {
+      setPhase('visible')
+    }
+  }, [isEmpty])
+
+  useEffect(() => {
+    if (phase !== 'closing') return
+    // Matches --dur-slow in generate-queue-toast.css's .gqt-toast--closing.
+    const timer = setTimeout(() => setPhase('hidden'), 320)
+    return () => clearTimeout(timer)
+  }, [phase])
+
+  if (phase === 'hidden') return null
 
   const visible = jobs.slice(0, MAX_VISIBLE)
   const overflow = jobs.length - visible.length
 
   return (
-    <div class="gqt-toast" role="status" aria-live="polite">
+    <div class={`gqt-toast${phase === 'closing' ? ' gqt-toast--closing' : ''}`} role="status" aria-live="polite">
       <div class="gqt-header">{t('queue.title')}</div>
       {resumables.length > 0 && (
         <div class="gqt-resume">

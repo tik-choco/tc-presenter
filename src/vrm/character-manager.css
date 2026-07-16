@@ -17,6 +17,7 @@
   flex-direction: column;
   gap: 12px;
   text-align: left;
+  animation: rise-in var(--dur-slow) var(--ease-out);
 }
 
 .character-manager__title {
@@ -72,6 +73,9 @@
   border-radius: var(--radius-m);
   background: var(--surface-2);
   overflow: hidden;
+  /* Holds the WebGL canvas (PresenterCharacter) — opacity-only fade so the
+     canvas never gets a transform that would force a repaint. */
+  animation: fade-in var(--dur-med) var(--ease-out);
 }
 
 .character-manager__btn {
@@ -83,11 +87,19 @@
   border: 1px solid var(--border-strong);
   background: var(--surface-2);
   color: var(--text-strong);
-  transition: background-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+  transition: background-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .character-manager__btn:hover:not(:disabled) {
   background: var(--surface-3);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-1);
+}
+
+.character-manager__btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+  box-shadow: none;
 }
 
 .character-manager__btn:disabled {
@@ -136,6 +148,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  animation: rise-in var(--dur-med) var(--ease-out);
 }
 
 .character-manager__item-select {
@@ -154,6 +167,8 @@
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .character-manager__item-select:hover {
@@ -189,6 +204,7 @@
   border-radius: var(--radius-s);
   line-height: 0;
   flex: none;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 .character-manager__item-remove:hover:not(:disabled) {

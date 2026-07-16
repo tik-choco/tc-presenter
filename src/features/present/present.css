@@ -53,6 +53,7 @@
   bottom: 12px;
   z-index: 4;
   pointer-events: none;
+  animation: fade-in var(--dur-slow) var(--ease-out);
 }
 
 .present-character--right {
@@ -103,6 +104,16 @@
   padding: 10px 22px;
   border-radius: var(--radius-pill);
   font-weight: 600;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.present-empty button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.present-empty button:active {
+  transform: scale(0.97);
 }
 
 .present-notice {
@@ -120,6 +131,7 @@
   z-index: 5;
   max-width: min(80%, 560px);
   text-align: center;
+  animation: rise-in var(--dur-med) var(--ease-out);
 }
 
 .present-captions {
@@ -136,6 +148,7 @@
   line-height: 1.55;
   white-space: pre-wrap;
   border-radius: var(--radius-m);
+  animation: rise-in var(--dur-med) var(--ease-out);
 }
 
 .present-controls {
@@ -148,6 +161,7 @@
   backdrop-filter: blur(10px);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   flex-wrap: wrap;
+  animation: rise-in var(--dur-med) var(--ease-out);
 }
 
 .present-controls__btn {
@@ -167,6 +181,10 @@
 .present-controls__btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.18);
   transform: translateY(-1px);
+}
+
+.present-controls__btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .present-controls__btn:disabled {

@@ -18,6 +18,7 @@
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-1);
   padding: 18px 20px;
+  animation: rise-in var(--dur-slow) var(--ease-out);
 }
 
 .src-panel__header {
@@ -67,6 +68,13 @@
   border-radius: var(--radius-m);
   padding: 12px 14px;
   background: var(--surface-2);
+  animation: rise-in var(--dur-med) var(--ease-out);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.src-card:hover {
+  border-color: var(--primary-border);
+  box-shadow: var(--shadow-1);
 }
 
 .src-card__top {
@@ -169,12 +177,16 @@
   border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 600;
-  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 
 .src-btn:hover {
   border-color: var(--primary-border);
   background: var(--primary-soft);
+}
+
+.src-btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .src-btn--danger:hover {
@@ -211,6 +223,15 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.src-mode-tabs__item:hover:not(.is-active) {
+  color: var(--text);
+}
+
+.src-mode-tabs__item:active {
+  transform: scale(0.97);
 }
 
 .src-mode-tabs__item.is-active {
@@ -243,6 +264,7 @@
   padding: 8px 10px;
   font-size: 13px;
   resize: vertical;
+  transition: border-color var(--dur-fast) var(--ease);
 }
 
 .src-field input:focus-visible,
@@ -264,6 +286,11 @@
 .src-toggle-row input[type='checkbox'] {
   width: 16px;
   height: 16px;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.src-toggle-row input[type='checkbox']:active {
+  transform: scale(0.9);
 }
 
 .src-note {
@@ -302,6 +329,12 @@
   border-radius: var(--radius-m);
   padding: 8px 12px;
   background: var(--surface-2);
+  animation: rise-in var(--dur-med) var(--ease-out);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.src-notedoc-item:hover {
+  border-color: var(--primary-border);
 }
 
 .src-notedoc-item__info {

@@ -83,6 +83,41 @@ a {
   border-radius: var(--radius-xs);
 }
 
+/* ---- Motion foundation ------------------------------------------- */
+
+/* Shared entrance keyframes — feature styles may reuse these instead
+   of redefining per-prefix variants. */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ---- App shell --------------------------------------------------- */
 
 .app-shell {
@@ -127,12 +162,19 @@ a {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-muted);
-  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
 .tab-bar__item:hover {
   background: var(--surface-3);
   color: var(--text);
+}
+
+.tab-bar__item:active {
+  transform: scale(0.97);
 }
 
 .tab-bar__item.is-active {
@@ -160,11 +202,21 @@ a {
   border-color: var(--primary-border);
 }
 
+.theme-toggle:active {
+  transform: translateY(0) scale(0.94);
+}
+
 .app-main {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* Gentle cross-view fade on tab switch — opacity only, so fixed/sticky
+   descendants keep their containing block. */
+.app-main > * {
+  animation: fade-in var(--dur-slow) var(--ease-out);
 }
 
 .app-loading {

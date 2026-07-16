@@ -17,6 +17,7 @@
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-1);
   padding: 18px 20px;
+  animation: rise-in var(--dur-slow) var(--ease-out);
 }
 
 .set-panel__title {
@@ -74,6 +75,13 @@
   border-radius: var(--radius-m);
   background: var(--surface-2);
   font-size: 13px;
+  animation: rise-in var(--dur-med) var(--ease-out);
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+
+.set-item:hover {
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
 }
 
 .set-item__main {
@@ -125,6 +133,7 @@
   color: var(--text);
   padding: 8px 10px;
   font-size: 13px;
+  transition: border-color var(--dur-fast) var(--ease);
 }
 
 .set-field input:focus-visible,
@@ -161,11 +170,16 @@
   border-radius: var(--radius-s);
   background: var(--surface);
   color: var(--text);
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 
 .set-icon-btn:hover:not(:disabled) {
   border-color: var(--primary-border);
   background: var(--primary-soft);
+}
+
+.set-icon-btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .set-icon-btn:disabled {
@@ -239,12 +253,16 @@
   border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 600;
-  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 
 .set-btn:hover {
   border-color: var(--primary-border);
   background: var(--primary-soft);
+}
+
+.set-btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .set-btn--primary {
@@ -282,6 +300,11 @@
 .set-toggle-row input[type='checkbox'] {
   width: 16px;
   height: 16px;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.set-toggle-row input[type='checkbox']:active {
+  transform: scale(0.9);
 }
 
 .set-note {
@@ -321,6 +344,15 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.set-segmented__item:hover:not(.is-active) {
+  color: var(--text);
+}
+
+.set-segmented__item:active {
+  transform: scale(0.97);
 }
 
 .set-segmented__item.is-active {
