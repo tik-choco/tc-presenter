@@ -11,7 +11,7 @@
 // produced internally. Since app.tsx doesn't persist that array itself, this
 // component is also responsible for bootstrapping it from sourceStore.ts on
 // first mount and keeping sourceStore.ts in sync on every change.
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { JSX } from 'preact'
 import './sources.css'
 import { t } from '../../i18n'
@@ -29,6 +29,15 @@ import {
 } from './globalArticlesOptIn'
 
 const NOTE_ARTICLE_TOPIC = 'note-article'
+
+// Feeds (tc-news sharedBus, tc-note doc index, tc-global-articles P2P) can
+// auto-ingest sources with no user action, up to sourceStore.ts's MAX_SOURCES
+// (300) cap. Rendering all of them as full SourceCards with no filtering or
+// paging would be unusable at that scale, so the list below is paged and
+// searchable/filterable by origin.
+const SOURCE_PAGE_SIZE = 30
+
+const SOURCE_ORIGINS: SourceMaterialOrigin[] = ['manual', 'tc-news', 'tc-note', 'url', 'file']
 
 function newId(): string {
   try {
@@ -469,22 +478,106 @@ export default function SourcesTab({ sources, onSourcesChange }: SourcesTabProps
     onSourcesChange(next)
   }
 
+  // Search/origin filtering + paging for the sources list — see the
+  // SOURCE_PAGE_SIZE comment above for why this exists. `query` and
+  // `originFilter` are reset together with `visibleCount` any time the
+  // filter criteria change, so the user always sees page one of a new
+  // filter result rather than a stale scroll position.
+  const [query, setQuery] = useState('')
+  const [originFilter, setOriginFilter] = useState<'all' | SourceMaterialOrigin>('all')
+  const [visibleCount, setVisibleCount] = useState(SOURCE_PAGE_SIZE)
+
+  const filteredSources = useMemo(() => {
+    const normalized = query.trim().toLowerCase()
+    return sources.filter((source) => {
+      if (originFilter !== 'all' && source.origin !== originFilter) return false
+      if (normalized === '') return true
+      if (source.title.toLowerCase().includes(normalized)) return true
+      if (source.excerpt && source.excerpt.toLowerCase().includes(normalized)) return true
+      if (source.body.toLowerCase().includes(normalized)) return true
+      return false
+    })
+  }, [sources, query, originFilter])
+
+  const isFiltering = query.trim() !== '' || originFilter !== 'all'
+
+  function handleDeleteShown() {
+    if (filteredSources.length === 0) return
+    if (!window.confirm(t('sources.list.deleteShownConfirm', { count: filteredSources.length }))) return
+    const shownIds = new Set(filteredSources.map((s) => s.id))
+    const next = sources.filter((s) => !shownIds.has(s.id))
+    saveSources(next)
+    onSourcesChange(next)
+  }
+
   return (
     <div class="src-tab">
       <div class="src-panel">
         <div class="src-panel__header">
           <span class="src-panel__title">{t('tabs.sources')}</span>
-          <span class="src-count">{t('sources.count', { count: sources.length })}</span>
+          <span class="src-count">
+            {isFiltering
+              ? t('sources.filteredCount', { shown: filteredSources.length, total: sources.length })
+              : t('sources.count', { count: sources.length })}
+          </span>
         </div>
         <p class="src-panel__hint">{t('sources.tcNews.hint')}</p>
+        {sources.length > 0 && (
+          <div class="src-toolbar">
+            <input
+              class="src-toolbar__search"
+              type="search"
+              value={query}
+              placeholder={t('sources.filter.searchPlaceholder')}
+              onInput={(e) => {
+                setQuery(e.currentTarget.value)
+                setVisibleCount(SOURCE_PAGE_SIZE)
+              }}
+            />
+            <select
+              class="src-select"
+              value={originFilter}
+              onChange={(e) => {
+                setOriginFilter(e.currentTarget.value as 'all' | SourceMaterialOrigin)
+                setVisibleCount(SOURCE_PAGE_SIZE)
+              }}
+            >
+              <option value="all">{t('sources.filter.originAll')}</option>
+              {SOURCE_ORIGINS.map((origin) => (
+                <option key={origin} value={origin}>
+                  {t(`sources.origin.${origin}`)}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              class="src-btn src-btn--danger"
+              disabled={filteredSources.length === 0}
+              onClick={handleDeleteShown}
+            >
+              {t('sources.list.deleteShown')}
+            </button>
+          </div>
+        )}
         {sources.length === 0 ? (
           <div class="src-empty">{t('sources.empty')}</div>
+        ) : filteredSources.length === 0 ? (
+          <div class="src-empty">{t('sources.filter.noMatch')}</div>
         ) : (
-          <div class="src-list">
-            {sources.map((source) => (
-              <SourceCard key={source.id} source={source} onDelete={handleDelete} />
-            ))}
-          </div>
+          <>
+            <div class="src-list">
+              {filteredSources.slice(0, visibleCount).map((source) => (
+                <SourceCard key={source.id} source={source} onDelete={handleDelete} />
+              ))}
+            </div>
+            {filteredSources.length > visibleCount && (
+              <div class="src-show-more">
+                <button type="button" class="src-btn" onClick={() => setVisibleCount((n) => n + SOURCE_PAGE_SIZE)}>
+                  {t('sources.list.showMore', { count: filteredSources.length - visibleCount })}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 

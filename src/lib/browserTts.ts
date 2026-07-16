@@ -94,6 +94,11 @@ export interface BrowserSpeechHandle {
   resume(): void
   /** Cancels playback and suppresses any further `onEnd`/`onError` calls. */
   stop(): void
+  /** Updates the utterance rate for subsequent chunks. The chunk currently
+   * being spoken keeps its original rate (the Web Speech API can't change an
+   * in-flight utterance) — chunked playback means the new rate takes effect
+   * within a sentence or so. */
+  setRate(rate: number): void
 }
 
 /**
@@ -116,6 +121,9 @@ export function createBrowserSpeech(params: {
   const chunks = chunkText(params.text)
   let stopped = false
   let chunkIndex = 0
+  // Mutable so `setRate()` can update it; read fresh in `speakNextChunk()` on
+  // every chunk so a rate change takes effect starting with the next chunk.
+  let rate = params.rate
 
   function resolveVoice(): SpeechSynthesisVoice | undefined {
     if (!params.voiceURI) return undefined
@@ -133,7 +141,7 @@ export function createBrowserSpeech(params: {
     chunkIndex += 1
 
     if (params.lang) utterance.lang = params.lang
-    if (params.rate !== undefined) utterance.rate = params.rate
+    if (rate !== undefined) utterance.rate = rate
     if (params.pitch !== undefined) utterance.pitch = params.pitch
     const voice = resolveVoice()
     if (voice) utterance.voice = voice
@@ -183,6 +191,9 @@ export function createBrowserSpeech(params: {
     stop() {
       stopped = true // set before cancel(): cancel() can synchronously/soon fire onerror/onend for the in-flight chunk
       if (isBrowserTtsSupported()) window.speechSynthesis.cancel()
+    },
+    setRate(next) {
+      rate = next
     },
   }
 }

@@ -12,6 +12,21 @@
 // reuses the same spentRef/fallbackStartRef accounting as the estimated-time
 // fallback below.
 //
+// Playback speed (settings/localPrefs.ts's PLAYBACK_SPEEDS) applies
+// differently per narration source, since only the fallback timer needs any
+// unit conversion: 'audio' just sets the <audio> element's playbackRate,
+// after which its own currentTime/duration already read in real (sped-up)
+// seconds, so the elapsed/total display needs no adjustment. 'browser' passes
+// the multiplier into SpeechSynthesisUtterance.rate (via createBrowserSpeech
+// / BrowserSpeechHandle.setRate), and its elapsed-time bookkeeping stays
+// wall-clock, same as before — totalMs is unknown for this source anyway, so
+// there's no ratio to keep consistent. 'fallback' has no underlying playback
+// engine to hand a rate to: durationMs is a 1x-equivalent estimate, so
+// spentRef accumulates in that same narration-time unit and the
+// setTimeout's real (wall-clock) delay is durationMs-remaining divided by
+// the current speed; the ticker converts the other direction (wall-clock
+// elapsed-since-resume times speed) when adding to spentRef for display.
+//
 // Architecture note: playback bookkeeping (the currently loaded narration,
 // elapsed/paused timers, the prefetch cache) lives in refs rather than
 // state, and is driven by two small effects — one that (re)loads narration
@@ -30,7 +45,14 @@ import { t } from '../../i18n'
 import { type BrowserSpeechHandle, createBrowserSpeech, isBrowserTtsSupported } from '../../lib/browserTts'
 import { loadLlmConfig } from '../../lib/llmConfig'
 import { synthesizeSpeech } from '../../lib/tts'
-import { loadCaptionsEnabled, saveCaptionsEnabled } from '../settings/localPrefs'
+import {
+  loadCaptionsEnabled,
+  loadPlaybackSpeed,
+  PLAYBACK_SPEEDS,
+  saveCaptionsEnabled,
+  savePlaybackSpeed,
+  type PlaybackSpeed,
+} from '../settings/localPrefs'
 import { SlideGridOverlay } from './SlideGridOverlay'
 import type { PresentPlayerProps } from '../../types'
 import { loadPresenterCharacterSettings } from '../../vrm/characterSettings'
@@ -126,6 +148,7 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   const [elapsedMs, setElapsedMs] = useState(0)
   const [totalMs, setTotalMs] = useState(0)
   const [fallbackCps, setFallbackCps] = useState<number>(() => loadFallbackCps())
+  const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(() => loadPlaybackSpeed())
   const [scale, setScale] = useState(1)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showCaptions, setShowCaptions] = useState<boolean>(() => loadCaptionsEnabled())
@@ -170,6 +193,10 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   useEffect(() => {
     fallbackCpsRef.current = fallbackCps
   }, [fallbackCps])
+  const playbackSpeedRef = useRef(playbackSpeed)
+  useEffect(() => {
+    playbackSpeedRef.current = playbackSpeed
+  }, [playbackSpeed])
   const showCaptionsRef = useRef(showCaptions)
   useEffect(() => {
     showCaptionsRef.current = showCaptions
@@ -341,7 +368,9 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
           fallbackTimerId.current = null
         }
         if (fallbackStartRef.current !== null) {
-          spentRef.current += Date.now() - fallbackStartRef.current
+          // Wall-clock elapsed since resume, converted back to narration-time
+          // (durationMs's unit) using the speed that was in effect while it ran.
+          spentRef.current += (Date.now() - fallbackStartRef.current) * playbackSpeedRef.current
           fallbackStartRef.current = null
         }
       }
@@ -363,7 +392,7 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
           text: narration.text,
           lang: target.lang,
           voiceURI: target.voiceURI,
-          rate: target.rate,
+          rate: (target.rate ?? 1) * playbackSpeedRef.current,
           pitch: target.pitch,
           onEnd: () => {
             browserHandleRef.current = null
@@ -379,13 +408,18 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
         handle.play()
       }
     } else {
+      // `remaining` is narration-time (durationMs's unit); the real timer
+      // delay is that divided by the current speed (faster speed => shorter wait).
       const remaining = Math.max(0, narration.durationMs - spentRef.current)
       fallbackStartRef.current = Date.now()
-      fallbackTimerId.current = window.setTimeout(() => {
-        fallbackStartRef.current = null
-        spentRef.current = narration.durationMs
-        advance()
-      }, remaining)
+      fallbackTimerId.current = window.setTimeout(
+        () => {
+          fallbackStartRef.current = null
+          spentRef.current = narration.durationMs
+          advance()
+        },
+        remaining / playbackSpeedRef.current,
+      )
     }
   }, [advance, fallbackFromError])
 
@@ -420,7 +454,12 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
       narrationRef.current = result
       setIsLoading(false)
       if (result.kind === 'audio') {
-        if (audio) audio.src = result.url
+        if (audio) {
+          audio.src = result.url
+          // Re-setting src resets playbackRate to 1 in some browsers, so
+          // reapply the current speed every time a new audio narration loads.
+          audio.playbackRate = playbackSpeedRef.current
+        }
       } else if (result.kind === 'browser') {
         // Duration is unknown up-front for browser SpeechSynthesis — totalMs
         // stays 0, which the time readout renders as '--:--'.
@@ -461,6 +500,13 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
       if (narration.kind === 'audio') {
         const audio = audioRef.current
         if (audio) setElapsedMs(audio.currentTime * 1000)
+      } else if (narration.kind === 'fallback') {
+        // Convert wall-clock elapsed-since-resume into narration-time to match
+        // spentRef's unit (durationMs), same conversion as the pause branch above.
+        const spent =
+          spentRef.current +
+          (fallbackStartRef.current !== null ? (Date.now() - fallbackStartRef.current) * playbackSpeedRef.current : 0)
+        setElapsedMs(spent)
       } else {
         const spent = spentRef.current + (fallbackStartRef.current !== null ? Date.now() - fallbackStartRef.current : 0)
         setElapsedMs(spent)
@@ -610,6 +656,46 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
     setFallbackCps(clamped)
     saveFallbackCps(clamped)
   }, [])
+
+  // Applies a new playback speed live, mid-narration, for all three sources.
+  // 'fallback' needs its running timer re-derived from the new speed, so its
+  // wall-clock-so-far is first folded into spentRef (narration-time, using
+  // the *old* speed still in playbackSpeedRef at that point) before the ref
+  // is updated and applyPlayPause() re-arms the timer from the fresh remaining time.
+  const handleSpeedChange = useCallback(
+    (next: PlaybackSpeed) => {
+      const narration = narrationRef.current
+      if (narration?.kind === 'fallback' && fallbackStartRef.current !== null) {
+        spentRef.current += (Date.now() - fallbackStartRef.current) * playbackSpeedRef.current
+        fallbackStartRef.current = null
+        if (fallbackTimerId.current !== null) {
+          window.clearTimeout(fallbackTimerId.current)
+          fallbackTimerId.current = null
+        }
+      }
+
+      playbackSpeedRef.current = next
+      setPlaybackSpeed(next)
+      savePlaybackSpeed(next)
+
+      if (narration?.kind === 'audio') {
+        if (audioRef.current) audioRef.current.playbackRate = next
+      } else if (narration?.kind === 'browser') {
+        browserHandleRef.current?.setRate((narration.target.rate ?? 1) * next)
+      } else if (narration?.kind === 'fallback') {
+        // isPlayingRef true => re-arms the timer from the new remaining time;
+        // paused => applyPlayPause's pause branch is a no-op here (already cleared above).
+        applyPlayPause()
+      }
+    },
+    [applyPlayPause],
+  )
+
+  const cycleSpeed = useCallback(() => {
+    const idx = PLAYBACK_SPEEDS.indexOf(playbackSpeedRef.current)
+    const next = PLAYBACK_SPEEDS[(idx + 1) % PLAYBACK_SPEEDS.length]
+    handleSpeedChange(next)
+  }, [handleSpeedChange])
 
   const slide = deck.slides[currentIndex]
   const buildStageTotal = useMemo(() => {
@@ -778,6 +864,15 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
         <span class="present-controls__time">
           {formatTime(elapsedMs)} / {totalMs > 0 ? formatTime(totalMs) : '--:--'}
         </span>
+        <button
+          type="button"
+          class="present-controls__btn present-controls__rate"
+          onClick={cycleSpeed}
+          aria-label={t('present.playbackSpeed')}
+          title={t('present.playbackSpeed')}
+        >
+          {playbackSpeed}x
+        </button>
         <span class="present-controls__count">
           {t('present.slideOf', { current: currentIndex + 1, total: deck.slides.length })}
         </span>

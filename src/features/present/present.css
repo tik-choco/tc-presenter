@@ -258,6 +258,16 @@
   color: #fff;
 }
 
+.present-controls__rate {
+  width: auto;
+  min-width: 48px;
+  border-radius: var(--radius-pill);
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 720px) {
   .present-controls__time,
   .present-controls__speed {

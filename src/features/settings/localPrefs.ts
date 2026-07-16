@@ -131,3 +131,29 @@ export function saveCaptionsEnabled(enabled: boolean): void {
     // best-effort persistence only
   }
 }
+
+// PresentPlayer's narration playback speed (features/present/PresentPlayer.
+// tsx). 1x is the default, so it's stored only when the presenter picks a
+// non-default speed — same "omit the default" shape as the other prefs here.
+export const PLAYBACK_SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const
+export type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number]
+
+const PLAYBACK_SPEED_KEY = 'tc-presenter:playback-speed'
+
+export function loadPlaybackSpeed(): PlaybackSpeed {
+  try {
+    const value = Number(localStorage.getItem(PLAYBACK_SPEED_KEY))
+    return (PLAYBACK_SPEEDS as readonly number[]).includes(value) ? (value as PlaybackSpeed) : 1
+  } catch {
+    return 1
+  }
+}
+
+export function savePlaybackSpeed(speed: PlaybackSpeed): void {
+  try {
+    if (speed === 1) localStorage.removeItem(PLAYBACK_SPEED_KEY)
+    else localStorage.setItem(PLAYBACK_SPEED_KEY, String(speed))
+  } catch {
+    // best-effort persistence only
+  }
+}
