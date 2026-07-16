@@ -23,8 +23,10 @@ const MAX_SOURCES_IN_PROMPT = 8
  * notes. Repeated verbatim in every generation/refine prompt. */
 const STYLE_GUIDE = `Slide quality bar (matches a strong reference deck we benchmark against):
 - Title: ~10-20 characters, specific (names the actual subject/number/outcome), never a generic label like "Overview".
-- Exactly ONE message per slide: most slides are ONE structured block plus a short caption, nothing else. On-slide text budget (title excluded) ~20-60 characters, hard limit 100; pill/box/label text 4-10 characters; description/bullet lines 15-25 characters. If an idea needs more room, split it into multiple slides instead of cramming.
-- Bullets are a last resort, not a default: at most 3 bullets, each ONE line (no wrapped sentences), and only when no block above fits. A deck where most slides are bullet lists is a quality failure — most slides should carry exactly one structured block instead.
+- Progressive disclosure for information-heavy topics: instead of inventing a new diagram each time, split them into consecutive slides that repeat almost the same block structure and add/change/highlight only 1-2 elements per step — this stepwise build-up (not one overloaded slide) is the reference deck's signature move for dense content.
+- Element budget: at most 6-8 independent visual elements per slide (each pill/box/icon/label is one element; an arrow-connected pair counts as one), 3-5 is the target. Over budget means split into another slide, never shrink the elements to fit.
+- Exactly ONE message per slide: most slides are ONE structured block plus its key message, stated as a single short (~1 line) caption/paragraph beneath the block, nothing else. On-slide text budget (title excluded) ~20-60 characters, hard limit 100; pill/box/label text 4-10 characters; description/bullet lines 15-25 characters. If an idea needs more room, split it into multiple slides (progressive disclosure, above) instead of cramming.
+- Bullets are a last resort, not a default: at most 3 bullets, each ONE line (no wrapped sentences), and only when no block above fits — before writing even a 2-item bullet list, check whether it converts to a pillRow or boxGroup instead. A deck where most slides are bullet lists is a quality failure — most slides should carry exactly one structured block instead.
 - On-slide text is a KEYWORD/summary extracted from the narration, never the narration's sentences pasted verbatim — the audience hears the full sentence spoken aloud and reads only the label/number on the slide.
 - Color discipline: white background + primary (wine-red) is the default for everything; the "warning" color role is reserved strictly for caution/exclusion/a called-out risk or trend, never for plain emphasis. Flat fills and thin borders only — no gradients, no drop shadows.
 - Every slide that uses external data, a quote, an image, or a screenshot MUST have a citation (source text, and a URL if you have one).
@@ -78,8 +80,10 @@ const BLOCK_SHAPES = `Block JSON shapes (fill exactly these fields; every block 
 
 const STYLE_GUIDE_COMPACT = `Slide quality bar:
 - Title: 10-20 chars, specific, never generic ("Overview").
-- ONE message per slide: one block + short caption. On-slide text ~20-60 chars, hard limit 100.
-- Bullets are a last resort: max 3, one line each.
+- Info-heavy topics: split into consecutive slides that repeat the same block structure, changing/adding only 1-2 elements each time — don't cram into one slide.
+- Element budget: max 6-8 visual elements per slide (3-5 ideal; each pill/box/icon/label is one element).
+- ONE message per slide: one block + short caption below it. On-slide text ~20-60 chars, hard limit 100.
+- Bullets are a last resort: max 3, one line each — check if it converts to a pillRow/boxGroup first.
 - On-slide text = extracted keywords only, never narration sentences.
 - Colors: white background + primary (wine-red) default; "warning" color only for risk/exclusion.
 - Cite any slide using external data, a quote, or an image.`
@@ -153,6 +157,7 @@ export function buildScriptMessages(sources: SourceMaterial[], opts: GenerateOpt
 Output shape exactly:
 {"title": "deck title in ${opts.language}, punchy and ~10-20 characters — becomes the bold white headline on the full-bleed primary-color cover card, so keep it short", "subtitle": "optional ONE short line (<=30 characters) cover subtitle in ${opts.language}, shown small beneath the title, or \\"\\"", "segments": [ {"section": "intro|body|conclusion", "heading": "short topic label in ${opts.language}, 10-20 characters, becomes that slide's title", "narration": "the full spoken text for this segment in ${opts.language}, 80-200 words of natural, complete spoken sentences", "chapter": "chapter/section name in ${opts.language} shared by every body segment in the same chapter, or \\"\\" — see the grouping rule below", "keyTakeaway": "ONE sentence in ${opts.language}, ~40 characters or fewer, stating this segment's implication/conclusion — never a paraphrase of narration. Required for every segment, all sections."} ]}
 Structure: exactly ONE "intro" segment (motivation/context), one or more "body" segments — each ONE coherent idea/step/finding, since each body segment becomes exactly ONE slide, so keep every body segment focused on a SINGLE point — and exactly ONE "conclusion" segment (wrap-up / takeaway). Follow a background -> objective -> proposal/content -> evaluation -> conclusion narrative arc across the body segments (adapt to the source material's actual subject).
+Progressive disclosure: when a single topic carries more content than one slide comfortably holds, do NOT compress it into one dense body segment — write it as 2-4 CONSECUTIVE body segments that each add exactly ONE new point/step/detail on top of the previous one (each becomes its own slide that reuses the previous slide's visual structure with a small addition). These still count toward the total segment cap below, they are not extra segments on top of it.
 ${capLine}
 Chapter grouping: if you write MORE THAN 6 body segments, group them into 2-5 chapters by giving every body segment in the same chapter the exact SAME "chapter" string (consecutive body segments only — never interleave two chapters). Leave "chapter":"" when you write 6 or fewer body segments, and always for intro/conclusion segments.
 "narration" must be the actual words to be spoken aloud — not an outline, not bullet fragments. It will be used verbatim as that slide's speaker notes.`
@@ -203,19 +208,21 @@ export function buildSegmentSlideMessages(
     ? `This segment's key takeaway is: "${segment.keyTakeaway}". Render it as exactly ONE calloutBox block (heading = short label, bullets = the takeaway, max 4 bullets) — or, only if a calloutBox would be redundant with the slide's single main block, as one clearly emphasized one-line conclusion element instead. The takeaway must be visibly stated on the slide, not just implied by the diagram/data.`
     : ''
   const layoutVarietyLine = previousLayoutSignature
-    ? `The immediately preceding slide's structure was "${previousLayoutSignature}" (layout:dominant-block-kind) — avoid repeating that same combination here; pick a different block kind or layout when the content allows it.`
+    ? `The immediately preceding slide's structure was "${previousLayoutSignature}" (layout:dominant-block-kind) — avoid repeating that same combination for an UNRELATED slide; pick a different block kind or layout when the content allows it. Exception: if this segment is a progressive-disclosure continuation of that same preceding slide's topic, deliberately repeating its structure is correct — see the progressive-disclosure instruction below.`
     : ''
   const layoutHintLine = layoutHint
     ? `Deck-wide variety plan: this slide was pre-assigned the block kind "${layoutHint}" so neighboring slides don't all share one structure. Use it — unless this segment's content clearly fits a different block kind better, in which case content wins over the assignment.`
     : ''
-  const titleUniquenessLine = `If this slide's subject is a split/continuation of the same theme as another segment in this deck (e.g. a multi-part breakdown of one topic), suffix the title with a circled number (①②③...) so no two slide titles are ever identical — never reuse an unlabeled duplicate title.`
+  const progressiveDisclosureLine = `Progressive disclosure: if this segment continues the SAME topic as the immediately preceding segment (a multi-part breakdown too dense for one slide), reuse that preceding slide's block kind, layout, and structure almost unchanged, and only add/change/highlight 1-2 elements to show this step — do not redesign the diagram from scratch. Keep the total element count within the 6-8 (ideally 3-5) budget from the style guide below.`
+  const titleUniquenessLine = `If this slide's subject is a split/continuation of the same theme as another segment in this deck (e.g. a multi-part breakdown of one topic, per the progressive-disclosure instruction above), suffix the title with a circled number (①②③...) so no two slide titles are ever identical — never reuse an unlabeled duplicate title.`
 
   const system = `You are an expert presentation designer visualizing ONE segment of an already-written narration script into ONE slide. Produce strict JSON only — no prose, no markdown fences.
 Output shape exactly: ${slideJsonShape()}
-This is segment ${segmentNumber} of ${totalSegments} (section: "${segment.section}"). Suggested slide type: ${typeHint}. Never use "type":"title" or "type":"section_break" here.
+This is segment ${segmentNumber} of ${totalSegments} (section: "${segment.section}"). Suggested slide type: ${typeHint}. Never use "type":"title" or "type":"section_break" here — section-transition dividers are inserted mechanically elsewhere in the pipeline, not generated per-segment.
 Choose the ONE content block (or up to 2 paired with "column") that best visualizes this segment's narration and put it in "blocks" — do NOT restate the narration as a wall of bullets or paragraphs; extract only the key terms/numbers/structure. Leave "body"/"visual" as their empty defaults when "blocks" is used; the renderer ignores them once "blocks" is non-empty.
 Pick "layout" to match: "diagram_centered" for the common case of one block plus a short caption; "two_column_text_diagram" only when two blocks are paired via "column"; "grid" for a boxGroup grid or gridHeatmap block; "single_column" otherwise. Every layout keeps the same common grid — title top, content centered, citation/footnote pinned to the bottom — so pick by content shape, not to change that structure.
 ${takeawayLine}
+${progressiveDisclosureLine}
 ${layoutVarietyLine}
 ${layoutHintLine}
 ${titleUniquenessLine}
@@ -263,6 +270,7 @@ export function buildRefineMessages(deck: Deck, score: DeckScore, opts: Generate
   const system = `You are revising an existing slide deck to fix specific quality issues. Produce strict JSON only — no prose, no markdown fences.
 Output shape exactly: {"title": "string", "slides": [ ${slideJsonShape()}, ... ]}
 Return the FULL deck (all slides, in order), not just the changed ones. Preserve slides that are already good; only change what the feedback below asks you to fix. Cover/title slides ("type":"title") must keep "blocks":[] — every other slide may use blocks. All content must remain in ${opts.language}.
+If any slide carries more than the 6-8 independent-element budget below, cut it down to the essential 3-5 rather than trying to keep everything — do not invent extra slides to hold the overflow unless the feedback explicitly asks for a split.
 ${getBlockGuide(opts)}
 ${getBlockShapes(opts)}
 ${getStyleGuide(opts)}`
@@ -311,6 +319,7 @@ export function buildSlideRefineMessages(
   const system = `You are revising ONE slide to fix specific quality issues, without changing what it's about. Produce strict JSON only — no prose, no markdown fences.
 Output shape exactly: ${slideJsonShape()}
 Keep the same subject/topic and the same "type" unless a fix explicitly requires changing it. Cover/title slides ("type":"title") and section_break slides must keep "blocks":[]. Do not include an "index" field; do not write "speakerNotes" — it is filled in separately and your value is discarded. All content in ${opts.language}.
+If this slide carries more than the 6-8 independent-element budget below, cut it down to the essential 3-5 rather than trying to keep everything.
 ${getBlockGuide(opts)}
 ${getBlockShapes(opts)}
 ${getStyleGuide(opts)}`

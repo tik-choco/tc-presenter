@@ -87,7 +87,7 @@
   align-items: center;
   gap: 16px;
   min-height: 40px;
-  margin-bottom: 28px;
+  margin-bottom: 36px;
   padding-top: 4px;
 }
 
@@ -579,20 +579,47 @@
    properties SlideView.tsx already wires from DeckTheme.
    ============================================================ */
 
+/* Content is vertically centered within the space between the title and the
+   footer, rather than hugging the top (reference decks keep content
+   occupying ~40-60% of the usable area, with an
+   intentional whitespace band above and below it — a fixed top-margin band
+   already comes from .slide-header's margin-bottom, and centering here
+   reclaims the matching band at the bottom instead of always letting it
+   collapse to zero on sparse slides / balloon unpredictably on dense ones).
+   Vertical spacing between visual groups is staged by block count via the
+   block-stack--sparse/--regular/--dense modifiers below (set from
+   Blocks.tsx's BlockStack), since a few large groups read better with
+   generous air between them while many small groups need tighter rhythm to
+   still fit. .slide-citation / .slide-footer are rendered as SlideView.tsx
+   siblings *after* .block-stack, not as children of it, so centering this
+   element's own children never moves them. */
 .block-stack {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  /* `safe center` falls back to flex-start when content overflows the stack
+     (overflow: hidden would otherwise clip it on BOTH the top and bottom
+     edges); the plain `center` line before it is the fallback for engines
+     without `safe` support. */
+  justify-content: center;
+  justify-content: safe center;
+  gap: 36px;
   overflow: hidden;
 }
 
-/* Content hugs the top of the slide, under the title, leaving whitespace
-   below (design-spec.md §1.3: "コンテンツ本体は画面上半分〜中央に集中させ、
-   下部に一定の空白を残す傾向") — deliberately NOT vertically centered in the
-   remaining canvas height, which is what the reference deck's pages (e.g.
-   p9, p15, p16) consistently look like. */
+.block-stack--sparse {
+  gap: 56px;
+}
+
+.block-stack--regular {
+  gap: 36px;
+}
+
+.block-stack--dense {
+  gap: 26px;
+}
+
 .block-stack__full {
   flex: 0 0 auto;
 }
@@ -600,7 +627,7 @@
 .block-stack__columns {
   flex: 0 0 auto;
   display: flex;
-  gap: 40px;
+  gap: 56px;
   align-items: flex-start;
 }
 
@@ -618,7 +645,7 @@
 .block-pill {
   display: inline-flex;
   align-items: center;
-  padding: 10px 22px;
+  padding: 12px 26px;
   border-radius: var(--radius-pill);
   border: 2px solid transparent;
   font-size: 20px;

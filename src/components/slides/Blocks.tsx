@@ -406,8 +406,15 @@ export function BlockStack({ blocks }: { blocks: PositionedBlock[] }) {
   }
   flush()
 
+  // Stage the gap between visual groups by how many there are (a `columns`
+  // pair counts as one group, same as the caller-facing description implies)
+  // so a couple of large groups get generous, airy spacing while five-plus
+  // small ones stay tight enough to still fit — see the block-stack--* rules
+  // in slides.css.
+  const density = groups.length <= 2 ? 'sparse' : groups.length <= 4 ? 'regular' : 'dense'
+
   return (
-    <div class="block-stack">
+    <div class={`block-stack block-stack--${density}`}>
       {groups.map((g, i) =>
         g.kind === 'full' ? (
           <div key={i} class="block-stack__full">

@@ -467,6 +467,15 @@ function layoutSignature(slide: Slide): string {
   return `${slide.layout}|${dominant}`
 }
 
+/** Consecutive-same-signature run length that counts as monotony rather than
+ * intentional structure. Raised from 3 to 4: prompts.ts's STYLE_GUIDE now
+ * directs the LLM to use "progressive disclosure" for information-heavy
+ * topics — 2-3 consecutive slides that deliberately repeat the same
+ * layout+block-kind signature, adding only 1-2 elements per step. A 3-slide
+ * run is that intended pattern, not a defect, so it must not be flagged;
+ * a 4+ run still reads as genuine layout fatigue. */
+const MONOTONY_RUN_THRESHOLD = 4
+
 function layoutVariety(slides: Slide[]): RuleMetricOutcome {
   if (slides.length === 0) return { score: 1, reason: 'No slides to check.' }
 
@@ -478,7 +487,7 @@ function layoutVariety(slides: Slide[]): RuleMetricOutcome {
     let j = i + 1
     while (j < signatures.length && signatures[j] === signatures[i]) j += 1
     const runLength = j - i
-    if (runLength >= 3) {
+    if (runLength >= MONOTONY_RUN_THRESHOLD) {
       runs += 1
       offenders.push(`#${slides[i].index}-#${slides[j - 1].index} (${signatures[i]})`)
     }
@@ -488,8 +497,8 @@ function layoutVariety(slides: Slide[]): RuleMetricOutcome {
   const maxAllowedRuns = Math.max(1, Math.floor(slides.length / 3))
   const score = clamp01(1 - runs / maxAllowedRuns)
   const reason = runs
-    ? `${runs} run(s) of 3+ consecutive same-layout slides: ${offenders.join(', ')}.`
-    : 'No 3+ consecutive slides share the same layout and dominant block kind.'
+    ? `${runs} run(s) of ${MONOTONY_RUN_THRESHOLD}+ consecutive same-layout slides: ${offenders.join(', ')}.`
+    : `No ${MONOTONY_RUN_THRESHOLD}+ consecutive slides share the same layout and dominant block kind.`
   return { score, reason }
 }
 
