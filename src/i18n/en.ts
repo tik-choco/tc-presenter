@@ -143,6 +143,10 @@ const en = {
   'editor.deck.noDeck': 'No deck loaded. Generate one above or open a saved deck.',
   'editor.deck.preview': 'Preview',
   'editor.deck.previewUnavailable': 'Slide preview is not available yet — this lands once Wave2 B (components/slides) is integrated.',
+
+  'editor.export.pdf': 'PDF',
+  'editor.export.pptx': 'PPTX',
+  'editor.export.video': 'Video',
   'editor.slide.title': 'Title',
   'editor.slide.badgeNumber': 'Badge #',
   'editor.slide.badgeLabel': 'Badge label',
@@ -175,6 +179,10 @@ const en = {
   'queue.resume': 'Resume',
   'queue.discard': 'Discard',
   'queue.resumeProgress': '{done}/{total} slides generated',
+  'queue.export.pdf': 'PDF export',
+  'queue.export.pptx': 'PPTX export',
+  'queue.export.video': 'Video export',
+  'queue.export.progress': 'slide {current}/{total}',
 
   // ---- Settings tab (Wave2 C) ------------------------------------------
   'settings.llm.title': 'LLM connections',
@@ -254,6 +262,7 @@ const en = {
   'present.emptyTitle': 'No deck to present yet',
   'present.emptyBody': 'Generate or open a deck in Editor first.',
   'present.deckSlideCount': '{count} slide(s)',
+  'present.updatedAt': 'Updated {date}',
   'present.start': 'Start presentation',
   'present.resume': 'Resume presentation',
   'present.exit': 'Exit',
@@ -268,6 +277,7 @@ const en = {
   'present.fallbackSpeedLabel': 'Auto-advance reading speed',
   'present.fallbackSpeedHint': 'characters / second (used when TTS is unavailable)',
   'present.fullscreenToggle': 'Toggle fullscreen',
+  'present.captionsToggle': 'Toggle captions (C)',
   'present.notesEmpty': 'This slide has no speaker notes.',
   'present.ended': 'End of presentation.',
 

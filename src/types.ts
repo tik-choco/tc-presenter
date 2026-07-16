@@ -754,6 +754,12 @@ export interface EditorTabProps {
 
 export interface PresentTabProps {
   deck: Deck | null
+  /** Monotonically increasing counter bumped by app.tsx's navigate listener
+   * whenever the CustomEvent detail carries `autoStart: true` (e.g. editor's
+   * "Present" button — an explicit user action that should jump straight
+   * into playing). PresentTab compares this against the last value it
+   * consumed so a plain tab switch back to Present never re-triggers it. */
+  autoStartToken?: number
 }
 
 export type SettingsTabProps = Record<string, never>

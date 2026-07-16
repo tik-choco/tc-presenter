@@ -85,6 +85,9 @@
 
 .edt-btn {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
@@ -93,6 +96,19 @@
   font-size: 12px;
   font-weight: 600;
   transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+
+.edt-btn__spinner {
+  animation: edt-btn-spin 1s linear infinite;
+}
+
+@keyframes edt-btn-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .edt-btn:hover {

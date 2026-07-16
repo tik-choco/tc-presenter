@@ -7,6 +7,7 @@
 // shell doesn't expose one), so `onExit` is handled locally: leaving
 // presentation mode drops back to a small "ready to present" screen with a
 // button to re-enter, rather than trying to switch tabs itself.
+import { Play } from 'lucide-preact'
 import { useEffect, useState } from 'preact/hooks'
 import '../../styles/global.css'
 import { t } from '../../i18n'
@@ -15,16 +16,36 @@ import { CharacterManager } from '../../vrm/CharacterManager'
 import { PresentPlayer } from './PresentPlayer'
 import './present-tab.css'
 
-export default function PresentTab({ deck }: PresentTabProps) {
-  const [presenting, setPresenting] = useState(Boolean(deck))
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString()
+  } catch {
+    return iso
+  }
+}
 
-  // If a deck first becomes available while this tab is open (e.g. the user
-  // just finished generating one in Editor and tabs over), jump straight
-  // into presenting — matching the "start immediately" expectation.
+// Tracks the last `autoStartToken` this tab has already acted on, across
+// mounts — PresentTab fully unmounts whenever the user leaves this tab (see
+// app.tsx: `{tab === 'present' && <PresentTab .../>}`), so component state/
+// refs can't carry this. app.tsx only bumps the token for an explicit
+// "Present" action (editor's handlePresent), never for a plain tab switch,
+// so comparing against this module-level value is enough to make the
+// auto-start one-shot without re-triggering on every remount.
+let consumedAutoStartToken = 0
+
+export default function PresentTab({ deck, autoStartToken }: PresentTabProps) {
+  const [presenting, setPresenting] = useState(false)
+
   useEffect(() => {
-    if (deck && !presenting) setPresenting(true)
+    const token = autoStartToken ?? 0
+    if (deck && token !== 0 && token !== consumedAutoStartToken) {
+      consumedAutoStartToken = token
+      setPresenting(true)
+    }
+    // Mount-only: autoStartToken can only change while this component is
+    // unmounted (see comment above), so there's nothing to react to later.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deck])
+  }, [])
 
   if (!deck) {
     return (
@@ -44,11 +65,17 @@ export default function PresentTab({ deck }: PresentTabProps) {
     return (
       <>
         <div class="present-tab__ready">
-          <p class="present-tab__ready-title">{deck.title}</p>
-          <p class="present-tab__ready-meta">{t('present.deckSlideCount', { count: deck.slides.length })}</p>
-          <button type="button" class="present-tab__start" onClick={() => setPresenting(true)}>
-            {t('present.resume')}
-          </button>
+          <div class="present-tab__ready-card">
+            <p class="present-tab__ready-title">{deck.title}</p>
+            <p class="present-tab__ready-meta">{t('present.deckSlideCount', { count: deck.slides.length })}</p>
+            {deck.updatedAt && (
+              <p class="present-tab__ready-updated">{t('present.updatedAt', { date: formatDate(deck.updatedAt) })}</p>
+            )}
+            <button type="button" class="present-tab__start" onClick={() => setPresenting(true)}>
+              <Play size={20} />
+              {t('present.start')}
+            </button>
+          </div>
         </div>
         <CharacterManager />
       </>

@@ -114,6 +114,26 @@
   color: var(--success-text);
 }
 
+/* Determinate progress bar (generate: per-segment slides; export: per-slide
+   render/encode steps). Sits under the status line, full row width. Uses the
+   same --primary/--border-strong tokens as .gqt-spinner so it tracks the
+   light/dark theme without its own overrides. */
+.gqt-progress {
+  margin-top: 6px;
+  width: 100%;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+  overflow: hidden;
+}
+
+.gqt-progress__fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--primary);
+  transition: width 0.2s var(--ease-out);
+}
+
 .gqt-item__error {
   margin-top: 2px;
   font-size: 11px;

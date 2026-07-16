@@ -21,7 +21,7 @@
 // restarts a slide's narration from zero, and manual prev/next during
 // playback naturally continues playing the next slide (no special-casing
 // needed) since both effects just react to whichever state changed.
-import { Maximize2, Minimize2, Pause, Play, SkipBack, SkipForward, X } from 'lucide-preact'
+import { Captions, Maximize2, Minimize2, Pause, Play, SkipBack, SkipForward, X } from 'lucide-preact'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { lazy, Suspense } from 'preact/compat'
 import type { ComponentType } from 'preact/compat'
@@ -30,6 +30,7 @@ import { t } from '../../i18n'
 import { type BrowserSpeechHandle, createBrowserSpeech, isBrowserTtsSupported } from '../../lib/browserTts'
 import { loadLlmConfig } from '../../lib/llmConfig'
 import { synthesizeSpeech } from '../../lib/tts'
+import { loadCaptionsEnabled, saveCaptionsEnabled } from '../settings/localPrefs'
 import type { PresentPlayerProps } from '../../types'
 import { loadPresenterCharacterSettings } from '../../vrm/characterSettings'
 import type { PresenterCharacterProps } from '../../vrm/PresenterCharacter'
@@ -125,6 +126,7 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   const [fallbackCps, setFallbackCps] = useState<number>(() => loadFallbackCps())
   const [scale, setScale] = useState(1)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showCaptions, setShowCaptions] = useState<boolean>(() => loadCaptionsEnabled())
 
   const containerRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -438,7 +440,15 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
     else containerRef.current?.requestFullscreen?.().catch(() => {})
   }, [])
 
-  // Keyboard: space=play/pause, arrows=prev/next, Esc=exit.
+  const toggleCaptions = useCallback(() => {
+    setShowCaptions((prev) => {
+      const next = !prev
+      saveCaptionsEnabled(next)
+      return next
+    })
+  }, [])
+
+  // Keyboard: space=play/pause, arrows=prev/next, c=captions, Esc=exit.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement | null)?.tagName
@@ -450,13 +460,15 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
         goNext()
       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
         goPrev()
+      } else if (e.key === 'c' || e.key === 'C') {
+        toggleCaptions()
       } else if (e.key === 'Escape') {
         onExit()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [goNext, goPrev, onExit])
+  }, [goNext, goPrev, onExit, toggleCaptions])
 
   const handleFallbackCpsChange = useCallback((value: number) => {
     if (!Number.isFinite(value)) return
@@ -511,6 +523,8 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
       </div>
 
       {noticeText && <div class="present-notice">{noticeText}</div>}
+
+      {showCaptions && slide.speakerNotes.trim() && <div class="present-captions">{slide.speakerNotes.trim()}</div>}
 
       <div class="present-controls">
         <button
@@ -569,6 +583,16 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
           />
         </label>
 
+        <button
+          type="button"
+          class={`present-controls__btn${showCaptions ? ' present-controls__btn--active' : ''}`}
+          onClick={toggleCaptions}
+          aria-pressed={showCaptions}
+          aria-label={t('present.captionsToggle')}
+          title={t('present.captionsToggle')}
+        >
+          <Captions size={18} />
+        </button>
         <button
           type="button"
           class="present-controls__btn"

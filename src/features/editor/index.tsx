@@ -27,11 +27,13 @@
 // gracefully to one extra manual click.
 import { useEffect, useState } from 'preact/hooks'
 import type { JSX } from 'preact'
+import { FileDown, FileText, Film } from 'lucide-preact'
 import './editor.css'
 import { t } from '../../i18n'
 import { deleteDeck, listDecks, loadDeck, saveDeck } from '../../lib/kv'
 import { loadLlmConfig, subscribeLlmConfig, type SharedLlmConfigV1 } from '../../lib/llmConfig'
 import { enqueueGenerateJob, subscribeGenerateJobs, getGenerateJobs } from '../../lib/generateJobs'
+import { enqueueExportJob } from '../../lib/exportJobs'
 import SlideView from '../../components/slides/SlideView'
 import { DECK_THEME_PRESETS } from './deckThemePresets'
 import { loadVisionPresetId } from '../settings/localPrefs'
@@ -540,11 +542,26 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
     commitDeck(deck)
     setPresentHint(true)
     try {
-      window.dispatchEvent(new CustomEvent('tc-presenter:navigate', { detail: { tab: 'present' } }))
+      window.dispatchEvent(new CustomEvent('tc-presenter:navigate', { detail: { tab: 'present', autoStart: true } }))
     } catch {
       // CustomEvent should always be available in a browser context; if not,
       // the deck is still saved and the user can switch tabs manually.
     }
+  }
+
+  function handleExportPdf() {
+    if (!deck) return
+    enqueueExportJob('pdf', deck)
+  }
+
+  function handleExportPptx() {
+    if (!deck) return
+    enqueueExportJob('pptx', deck)
+  }
+
+  function handleExportVideo() {
+    if (!deck) return
+    enqueueExportJob('video', deck)
   }
 
   return (
@@ -833,6 +850,18 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
             <div class="edt-panel__actions">
               <button type="button" class="edt-btn" onClick={addSlide}>
                 {t('editor.deck.addSlide')}
+              </button>
+              <button type="button" class="edt-btn" onClick={handleExportPdf}>
+                <FileText size={16} aria-hidden="true" />
+                {t('editor.export.pdf')}
+              </button>
+              <button type="button" class="edt-btn" onClick={handleExportPptx}>
+                <FileDown size={16} aria-hidden="true" />
+                {t('editor.export.pptx')}
+              </button>
+              <button type="button" class="edt-btn" onClick={handleExportVideo}>
+                <Film size={16} aria-hidden="true" />
+                {t('editor.export.video')}
               </button>
               <button type="button" class="edt-btn edt-btn--primary" onClick={handlePresent}>
                 {t('editor.deck.present')}

@@ -43,6 +43,10 @@ export function App() {
   const [tab, setTab] = useState<TabId>('sources')
   const [sources, setSources] = useState<SourceMaterial[]>([])
   const [deck, setDeck] = useState<Deck | null>(null)
+  // Bumped whenever a navigate event asks Present to auto-start (see below);
+  // PresentTab uses this as a one-shot token so only that explicit request
+  // starts playback immediately, not every visit to the tab.
+  const [presentAutoStartToken, setPresentAutoStartToken] = useState(0)
 
   // Decoupled cross-tab navigation hook: features (e.g. editor's "Present"
   // button) dispatch this instead of taking a prop-based callback, since
@@ -50,8 +54,11 @@ export function App() {
   // handlePresent for the dispatch side.
   useEffect(() => {
     function handleNavigate(event: Event) {
-      const detail = (event as CustomEvent<{ tab?: string }>).detail
-      if (detail && isTabId(detail.tab)) setTab(detail.tab)
+      const detail = (event as CustomEvent<{ tab?: string; autoStart?: boolean }>).detail
+      if (detail && isTabId(detail.tab)) {
+        setTab(detail.tab)
+        if (detail.autoStart) setPresentAutoStartToken((n) => n + 1)
+      }
     }
     window.addEventListener('tc-presenter:navigate', handleNavigate)
     return () => window.removeEventListener('tc-presenter:navigate', handleNavigate)
@@ -100,7 +107,7 @@ export function App() {
         <Suspense fallback={<div class="app-loading">{t('common.loading')}</div>}>
           {tab === 'sources' && <SourcesTab sources={sources} onSourcesChange={setSources} />}
           {tab === 'editor' && <EditorTab deck={deck} onDeckChange={setDeck} sources={sources} />}
-          {tab === 'present' && <PresentTab deck={deck} />}
+          {tab === 'present' && <PresentTab deck={deck} autoStartToken={presentAutoStartToken} />}
           {tab === 'settings' && <SettingsTab />}
         </Suspense>
       </main>

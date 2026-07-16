@@ -18,8 +18,15 @@ import type { DeckTheme, Slide } from '../../types'
 
 /** Renders `slide` offscreen and returns a PNG data URI, or null if the
  * environment can't render (no DOM) or rasterization fails for any reason
- * (fonts not ready, canvas tainted, etc.) — never throws. */
-export async function renderSlideToPng(slide: Slide, theme: DeckTheme, pageTotal: number): Promise<string | null> {
+ * (fonts not ready, canvas tainted, etc.) — never throws.
+ * `pixelRatio` defaults to 1 (vision-judge use); exporters (lib/export/*)
+ * pass a higher value for print-quality output. */
+export async function renderSlideToPng(
+  slide: Slide,
+  theme: DeckTheme,
+  pageTotal: number,
+  pixelRatio = 1,
+): Promise<string | null> {
   if (typeof document === 'undefined') return null
 
   const host = document.createElement('div')
@@ -44,7 +51,7 @@ export async function renderSlideToPng(slide: Slide, theme: DeckTheme, pageTotal
     const canvasEl = host.querySelector<HTMLElement>('.slide-canvas')
     if (!canvasEl) return null
 
-    return await toPng(canvasEl, { pixelRatio: 1, cacheBust: true, backgroundColor: theme.colorPalette?.background })
+    return await toPng(canvasEl, { pixelRatio, cacheBust: true, backgroundColor: theme.colorPalette?.background })
   } catch {
     return null
   } finally {

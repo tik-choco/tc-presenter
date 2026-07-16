@@ -1,14 +1,17 @@
-// Cross-tab toast showing deck-generation job progress. Mounted once at the
-// app shell level (outside the tab switch in app.tsx) so it stays visible
-// regardless of which tab the user is on. Reads/writes lib/generateJobs.ts's
-// module-level job queue (see that file's public API contract) — this
-// component owns no state of its own beyond a subscribed snapshot.
+// Cross-tab toast showing deck-generation AND export job progress. Mounted
+// once at the app shell level (outside the tab switch in app.tsx) so it
+// stays visible regardless of which tab the user is on. Reads/writes
+// lib/generateJobs.ts's and lib/exportJobs.ts's module-level job queues (see
+// each file's public API contract) — this component owns no state of its
+// own beyond two subscribed snapshots, one per queue.
 //
 // Modeled on tc-pdf-viewer's `.ai-queue-toast` (src/App.jsx +
 // src/index.css): fixed bottom-right stack of job rows, each cancellable.
-// `cancelGenerateJob` doubles as "cancel" (queued/running) and "dismiss"
-// (terminal states) per its contract, so a single ✕ button covers every
-// status.
+// `cancelGenerateJob`/`cancelExportJob` double as "cancel" (queued/running)
+// and "dismiss" (terminal states) per their contracts, so a single ✕ button
+// covers every status. Export jobs render as plain rows appended after the
+// generate jobs in the same `.gqt-list` — no separate section header, since
+// both are "things currently happening", just of different kinds.
 import { useEffect, useState } from 'preact/hooks'
 import { X } from 'lucide-preact'
 import './generate-queue-toast.css'
@@ -23,6 +26,7 @@ import {
   type GenerateJob,
   type ResumableGenerateJob,
 } from '../lib/generateJobs'
+import { cancelExportJob, getExportJobs, subscribeExportJobs, type ExportJob } from '../lib/exportJobs'
 
 const MAX_VISIBLE = 4
 
@@ -60,11 +64,49 @@ function statusText(job: GenerateJob): string {
   }
 }
 
+/** Status line for an export job — mirrors `statusText` above, but
+ * `ExportJob` reports `current`/`total` directly rather than through a
+ * nested `progress` object, so `running` renders the slide-count string
+ * instead of a generation stage name. */
+function exportStatusText(job: ExportJob): string {
+  switch (job.status) {
+    case 'queued':
+      return t('queue.queued')
+    case 'running':
+      return job.total > 0 ? t('queue.export.progress', { current: job.current, total: job.total }) : t('queue.queued')
+    case 'cancelling':
+      return t('queue.cancelling')
+    case 'complete':
+      return t('queue.complete')
+    case 'failed':
+      return t('queue.failed')
+    case 'cancelled':
+      return t('queue.cancelled')
+    default:
+      return ''
+  }
+}
+
+/** Determinate horizontal progress bar shared by generate (per-segment) and
+ * export (per-slide) rows. `total` is assumed > 0 by callers — they gate
+ * rendering on that already, since a 0-total bar has nothing meaningful to
+ * show. */
+function ProgressBar({ current, total }: { current: number; total: number }) {
+  const pct = Math.min(100, Math.max(0, (current / total) * 100))
+  return (
+    <div class="gqt-progress" role="progressbar" aria-valuenow={current} aria-valuemin={0} aria-valuemax={total}>
+      <div class="gqt-progress__fill" style={{ width: `${pct}%` }} />
+    </div>
+  )
+}
+
 export default function GenerateQueueToast({ onOpenDeck }: GenerateQueueToastProps) {
   const [jobs, setJobs] = useState<GenerateJob[]>(() => getGenerateJobs())
   const [resumables, setResumables] = useState<ResumableGenerateJob[]>([])
+  const [exportJobs, setExportJobs] = useState<ExportJob[]>(() => getExportJobs())
 
   useEffect(() => subscribeGenerateJobs(() => setJobs(getGenerateJobs())), [])
+  useEffect(() => subscribeExportJobs(() => setExportJobs(getExportJobs())), [])
 
   // Interrupted generations left on disk by a previous session (or a
   // cancel/failure in this one). Refreshed on every queue change — resuming
@@ -84,7 +126,7 @@ export default function GenerateQueueToast({ onOpenDeck }: GenerateQueueToastPro
     }
   }, [])
 
-  if (jobs.length === 0 && resumables.length === 0) return null
+  if (jobs.length === 0 && resumables.length === 0 && exportJobs.length === 0) return null
 
   const visible = jobs.slice(0, MAX_VISIBLE)
   const overflow = jobs.length - visible.length
@@ -136,6 +178,9 @@ export default function GenerateQueueToast({ onOpenDeck }: GenerateQueueToastPro
                 {job.status === 'running' && <span class="gqt-spinner" />}
                 <span>{statusText(job)}</span>
               </div>
+              {job.status === 'running' && job.progress?.stage === 'slides' && !!job.progress.segmentsTotal && (
+                <ProgressBar current={job.progress.segmentsDone ?? 0} total={job.progress.segmentsTotal} />
+              )}
               {job.status === 'failed' && job.error && (
                 <div class="gqt-item__error" title={job.error}>
                   {job.error}
@@ -159,6 +204,38 @@ export default function GenerateQueueToast({ onOpenDeck }: GenerateQueueToastPro
                 type="button"
                 class="gqt-cancel"
                 onClick={() => cancelGenerateJob(job.id)}
+                aria-label={t('queue.cancel')}
+                title={t('queue.cancel')}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        ))}
+        {exportJobs.map((job) => (
+          <div key={`export-${job.id}`} class={`gqt-item gqt-item--${job.status}`}>
+            <div class="gqt-item__main">
+              <div class="gqt-item__label" title={job.label}>
+                {job.label}
+              </div>
+              <div class="gqt-item__status">
+                {job.status === 'running' && <span class="gqt-spinner" />}
+                <span>
+                  {t(`queue.export.${job.kind}`)} · {exportStatusText(job)}
+                </span>
+              </div>
+              {job.status === 'running' && job.total > 0 && <ProgressBar current={job.current} total={job.total} />}
+              {job.status === 'failed' && job.error && (
+                <div class="gqt-item__error" title={job.error}>
+                  {job.error}
+                </div>
+              )}
+            </div>
+            <div class="gqt-item__actions">
+              <button
+                type="button"
+                class="gqt-cancel"
+                onClick={() => cancelExportJob(job.id)}
                 aria-label={t('queue.cancel')}
                 title={t('queue.cancel')}
               >

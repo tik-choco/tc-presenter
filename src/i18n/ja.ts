@@ -145,6 +145,10 @@ const ja: Partial<Record<TranslationKey, string>> = {
   'editor.deck.noDeck': 'デッキが読み込まれていません。上で生成するか、保存済みデッキを開いてください。',
   'editor.deck.preview': 'プレビュー',
   'editor.deck.previewUnavailable': 'スライドプレビューはまだ利用できません — Wave2 B(components/slides)の統合後に有効になります。',
+
+  'editor.export.pdf': 'PDF',
+  'editor.export.pptx': 'PPTX',
+  'editor.export.video': '動画',
   'editor.slide.title': 'タイトル',
   'editor.slide.badgeNumber': 'バッジ番号',
   'editor.slide.badgeLabel': 'バッジラベル',
@@ -177,6 +181,10 @@ const ja: Partial<Record<TranslationKey, string>> = {
   'queue.resume': '再開',
   'queue.discard': '破棄',
   'queue.resumeProgress': 'スライド {done}/{total} 枚生成済み',
+  'queue.export.pdf': 'PDF出力',
+  'queue.export.pptx': 'PPTX出力',
+  'queue.export.video': '動画出力',
+  'queue.export.progress': '{current}/{total} 枚',
 
   // ---- 設定タブ ---------------------------------------------------------
   'settings.llm.title': 'LLM 接続',
@@ -256,6 +264,7 @@ const ja: Partial<Record<TranslationKey, string>> = {
   'present.emptyTitle': 'まだ発表できるデッキがありません',
   'present.emptyBody': '先にエディタでデッキを生成または開いてください。',
   'present.deckSlideCount': '{count} 枚',
+  'present.updatedAt': '{date} 更新',
   'present.start': '発表を開始',
   'present.resume': '発表を再開',
   'present.exit': '終了',
@@ -270,6 +279,7 @@ const ja: Partial<Record<TranslationKey, string>> = {
   'present.fallbackSpeedLabel': '自動送りの読み上げ速度',
   'present.fallbackSpeedHint': '文字/秒(TTS が使えない場合に使用)',
   'present.fullscreenToggle': '全画面表示を切り替え',
+  'present.captionsToggle': '字幕の表示を切り替え (C)',
   'present.notesEmpty': 'このスライドにはスピーカーノートがありません。',
   'present.ended': '発表が終了しました。',
 

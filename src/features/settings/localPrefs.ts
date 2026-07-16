@@ -49,3 +49,25 @@ export function saveVisionPresetId(presetId: string): void {
     // best-effort persistence only
   }
 }
+
+// PresentPlayer's speakerNotes caption overlay toggle (features/present/
+// PresentPlayer.tsx). Off by default — presenting already shows the slide
+// full-screen, so captions are an opt-in accessibility/reference aid.
+const CAPTIONS_ENABLED_KEY = 'tc-presenter:captions-enabled'
+
+export function loadCaptionsEnabled(): boolean {
+  try {
+    return localStorage.getItem(CAPTIONS_ENABLED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function saveCaptionsEnabled(enabled: boolean): void {
+  try {
+    if (enabled) localStorage.setItem(CAPTIONS_ENABLED_KEY, '1')
+    else localStorage.removeItem(CAPTIONS_ENABLED_KEY)
+  } catch {
+    // best-effort persistence only
+  }
+}

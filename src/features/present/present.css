@@ -122,6 +122,22 @@
   text-align: center;
 }
 
+.present-captions {
+  flex: 0 0 auto;
+  max-width: min(90%, 900px);
+  max-height: 30vh;
+  overflow-y: auto;
+  margin: 0 auto 12px;
+  padding: 10px 20px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  text-align: center;
+  font-size: 16px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  border-radius: var(--radius-m);
+}
+
 .present-controls {
   flex: 0 0 auto;
   display: flex;
@@ -156,6 +172,15 @@
 .present-controls__btn:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+.present-controls__btn--active {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.present-controls__btn--active:hover:not(:disabled) {
+  background: var(--primary-hover);
 }
 
 .present-controls__btn--main {
