@@ -613,6 +613,12 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
   const [tone, setTone] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [useLlmJudge, setUseLlmJudge] = useState(true)
+  // Rule-based narration-script check (features/generate/scriptCheck.ts) run
+  // right after the script is written, before any slide generates from it —
+  // on by default like useLlmJudge above; unchecking sets
+  // GenerateOptions.scriptCheck: false to skip the check (and its possible
+  // one-shot LLM repair call) entirely.
+  const [scriptCheck, setScriptCheck] = useState(true)
   // Vision judging needs a vision-capable preset configured once in Settings
   // (features/settings's "Vision judge" section) — when one is set, default
   // this on so generation "just works" without extra per-run configuration,
@@ -772,6 +778,11 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
     }
     if (compactPrompt) opts.promptProfile = 'compact'
     if (batchRefine) opts.refineStrategy = 'batch'
+    // Only set when off — true is generateDeck.ts's own default (opts.
+    // scriptCheck === false is the sole check it makes), so an unchanged
+    // (checked) toggle leaves opts.scriptCheck unset like the other
+    // default-true knobs above.
+    if (!scriptCheck) opts.scriptCheck = false
     if (workerPresetId) opts.workerPresetId = workerPresetId
     const workerConcurrencyNum = Number(workerConcurrency.trim())
     if (Number.isFinite(workerConcurrencyNum) && workerConcurrencyNum > 1) {
@@ -1089,6 +1100,10 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
               <label class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
                 <input type="checkbox" checked={useLlmJudge} onChange={(e) => setUseLlmJudge(e.currentTarget.checked)} />
                 <span>{t('editor.create.useLlmJudge')}</span>
+              </label>
+              <label class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+                <input type="checkbox" checked={scriptCheck} onChange={(e) => setScriptCheck(e.currentTarget.checked)} />
+                <span>{t('editor.create.scriptCheck')}</span>
               </label>
               <label class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
                 <input

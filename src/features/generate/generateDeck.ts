@@ -27,14 +27,17 @@ import {
   type DeckScore,
   type GenerateDeckFn,
   type GenerateOptions,
+  type GenerateProgressCallback,
   type MindmapNode,
   type PositionedBlock,
   type Slide,
   type SlideType,
   type SourceMaterial,
 } from '../../types'
+import { planLayoutHints } from './layoutPlan'
 import { extractJson, newId, normalizeScript, normalizeSlide, type Script, type ScriptSegment } from './parse'
-import { buildRefineMessages, buildScriptMessages, buildSegmentSlideMessages, buildSlideRefineMessages } from './prompts'
+import { buildRefineMessages, buildScriptMessages, buildScriptRefineMessages, buildSegmentSlideMessages, buildSlideRefineMessages } from './prompts'
+import { checkScript } from './scriptCheck'
 import { DEFAULT_DECK_THEME } from './theme'
 
 const SCRIPT_TIMEOUT_MS = 90_000
@@ -57,6 +60,47 @@ async function generateScript(sources: SourceMaterial[], opts: GenerateOptions):
     return normalizeScript(extractJson(raw), fallbackTitle, opts.maxSlides)
   } catch {
     return normalizeScript(null, fallbackTitle, opts.maxSlides)
+  }
+}
+
+/** Rule-checks a freshly-written script (scriptCheck.ts's checkScript) and,
+ * when it finds issues, attempts ONE bounded LLM repair call
+ * (buildScriptRefineMessages) before the script is committed as the
+ * checkpoint payload — see generateDeck's caller below, which runs this
+ * between generateScript() and the 'script' onProgress emit that carries the
+ * checkpoint-commit `script` field. A bad script poisons every downstream
+ * per-segment slide, so catching structural defects (missing intro/
+ * conclusion, bullet-fragment "narration", duplicate headings, interleaved
+ * chapters, ...) here is far cheaper than relying on the per-slide refine
+ * loop to notice something is off later.
+ *
+ * Never loops and never throws: at most one repair call is made, its result
+ * is re-checked with checkScript, and the revision is kept ONLY if it has
+ * strictly fewer issues than the original — otherwise (LLM failure, no
+ * parseable JSON, no improvement) the original script is kept, matching this
+ * file's "generateDeck always resolves" philosophy. `throwIfAborted` still
+ * applies around the one await so a cancellation mid-repair-call surfaces as
+ * an abort rather than silently finishing the repair. Skipped entirely when
+ * `opts.scriptCheck` is false or the script already has no issues. Uses
+ * `opts` (the orchestrator preset), not a worker preset — like the batch
+ * refine call, fixing the script is an orchestrator-level responsibility. */
+async function checkAndFixScript(script: Script, opts: GenerateOptions, onProgress?: GenerateProgressCallback): Promise<Script> {
+  if (opts.scriptCheck === false) return script
+  const issues = checkScript(script)
+  if (issues.length === 0) return script
+
+  onProgress?.({ stage: 'script', message: 'Checking & fixing script' })
+  try {
+    const raw = await requestChatCompletion(buildScriptRefineMessages(script, issues, opts), chatOpts(opts, SCRIPT_TIMEOUT_MS))
+    throwIfAborted(opts.signal)
+    const parsed = extractJson(raw)
+    if (!parsed) return script
+    const fallbackTitle = script.title.trim() || 'Untitled Deck'
+    const revised = normalizeScript(parsed, fallbackTitle, opts.maxSlides)
+    return checkScript(revised).length < issues.length ? revised : script
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err
+    return script
   }
 }
 
@@ -146,31 +190,6 @@ async function generateSegmentSlide(
  * cancelling never loses already-committed progress. */
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-}
-
-/** Body-segment block kinds rotated through by planLayoutHints. Restricted
- * to kinds present in BOTH prompt profiles (prompts.ts's compact guide is a
- * subset of the full one), so a hint never names a block the prompt didn't
- * describe. */
-const BODY_BLOCK_ROTATION = ['flow', 'boxGroup', 'comparison', 'pillRow'] as const
-
-/** Deterministic per-segment block-kind pre-assignment, computed once from
- * the script (the plan) before any slide generates. This replaces the
- * sequential previousLayoutSignature chain as the layout_variety defense
- * when segment slides generate CONCURRENTLY (workerConcurrency > 1): each
- * worker call is independent, so anti-monotony has to be planned up front
- * rather than reacted to slide-by-slide. The hint is soft — the prompt tells
- * the model content fit always wins (see buildSegmentSlideMessages). Only
- * body segments get hints; intro/conclusion slides already have their own
- * type steering. */
-function planLayoutHints(script: Script): (string | undefined)[] {
-  let bodyCount = 0
-  return script.segments.map((segment) => {
-    if (segment.section !== 'body') return undefined
-    const kind = BODY_BLOCK_ROTATION[bodyCount % BODY_BLOCK_ROTATION.length]
-    bodyCount += 1
-    return kind
-  })
 }
 
 /** Skeleton stand-in for a segment whose slide hasn't generated yet, used
@@ -493,6 +512,11 @@ export const generateDeck: GenerateDeckFn = async (sources, opts, onProgress) =>
     onProgress?.({ stage: 'script', message: 'Writing presentation script' })
     script = await generateScript(sources, opts)
     throwIfAborted(opts.signal)
+    // Rule-check + (at most one) LLM repair pass BEFORE the checkpoint-commit
+    // emit below — a resumed script (the `if` branch above) is already
+    // committed/checkpointed, so it's intentionally never re-checked here.
+    script = await checkAndFixScript(script, opts, onProgress)
+    throwIfAborted(opts.signal)
     // `script` in the event is the checkpoint-commit payload — emitted only
     // for a freshly generated script (a resumed one is already committed).
     onProgress?.({ stage: 'script', script })
@@ -566,7 +590,7 @@ export const generateDeck: GenerateDeckFn = async (sources, opts, onProgress) =>
     onProgress?.({ stage: 'slides', message: `Visualizing ${total} segment(s)`, ...buildPartial() })
 
     const concurrency = Math.max(1, Math.min(8, Math.trunc(opts.workerConcurrency ?? 1)))
-    const layoutHints = planLayoutHints(script)
+    const layoutHints = planLayoutHints(script, opts)
 
     // The reactive previousLayoutSignature chain only exists sequentially;
     // concurrent workers rely on the planned hints alone (see

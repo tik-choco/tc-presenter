@@ -221,17 +221,21 @@ function ComparisonView({ block }: { block: ComparisonBlock }) {
 
 // ---- F. flow --------------------------------------------------------------------
 
-/** Horizontal flow connectors render as a gently bowed curve + arrowhead
- * (inline SVG, matching the reference deck's "発表の流れ" style) rather than
- * a straight CSS triangle — an SVG path is the only reliable way to get a
- * true curve, and unlike a CSS mask-image it rasterizes correctly through
- * html-to-image (lib/evaluator/visionRender.tsx, exports) the same way the
- * existing .slide-diagram__edge SVGs already do. */
+/** Horizontal flow connectors render as a straight shaft + arrowhead (inline
+ * SVG, matching the reference deck's clean PowerPoint-style "発表の流れ"
+ * arrows) rather than a CSS triangle — an SVG path is the only reliable way
+ * to keep the shaft and arrowhead perfectly tangent, and unlike a CSS
+ * mask-image it rasterizes correctly through html-to-image
+ * (lib/evaluator/visionRender.tsx, exports) the same way the existing
+ * .slide-diagram__edge SVGs already do. The shaft runs straight into the
+ * arrowhead's base (both at y=12, the viewBox's vertical center) so there's
+ * no kink between the two, and stroke-linecap: round on the shaft (see
+ * slides.css) fills any anti-aliasing seam at that join. */
 function FlowConnector() {
   return (
     <svg class="block-flow__connector" viewBox="0 0 52 24" aria-hidden="true">
-      <path d="M2 20 Q26 2 44 12" />
-      <path class="block-flow__connector-head" d="M38 5 L48 12 L38 19 Z" />
+      <path class="block-flow__connector-shaft" d="M2 12 L36 12" />
+      <path class="block-flow__connector-head" d="M36 5 L50 12 L36 19 Z" />
     </svg>
   )
 }

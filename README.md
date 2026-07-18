@@ -68,6 +68,10 @@ Four of these (`structure_coverage`, `title_uniqueness`, `takeaway_presence`, `l
 
 By default the refine pass only regenerates the worst-scoring slides one at a time (`refineStrategy: 'per_slide'`), which suits local LLMs better than one large whole-deck JSON call; the old whole-deck refine is still available as "batch refine" for large hosted models. See the Local LLM section below for this plus the compact prompt profile.
 
+The narration script itself is also checked before any slide generates from it (`src/features/generate/scriptCheck.ts`): a rule-based pass validates the script against `buildScriptMessages`' contract — exactly one intro/conclusion, narration written as spoken sentences (not an outline), heading/takeaway lengths, duplicate headings, chapter-grouping consistency — and if issues are found, one bounded LLM repair call rewrites the script, kept only when the re-check shows strictly fewer issues. This runs before the script's checkpoint commit, so a resumed run always resumes from the checked script. On by default; Editor's "Advanced" section has a toggle (`GenerateOptions.scriptCheck`).
+
+Per-segment slide layouts are planned content-aware (`src/features/generate/layoutPlan.ts`): each body segment's heading/narration/takeaway is keyword-matched (Japanese + English) against the block-kind vocabulary (flow for procedures, comparison for trade-offs, boxGroup for structures, …) so the layout hint actually fits the content, with least-recently-used rotation as the no-signal fallback, a no-3-consecutive-repeats guard, and deliberate structure reuse for progressive-disclosure continuations. This replaces the earlier content-blind fixed rotation.
+
 ## Progressive generation, checkpoints, and resume
 
 Generation streams its progress instead of appearing only at the end. As soon as the narration script is written, the Editor tab shows a live skeleton of the whole deck (cover, agenda, chapter dividers, one pending row per segment) that fills in slide by slide, and the queue toast shows a per-slide "3/12" counter.

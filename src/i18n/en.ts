@@ -102,6 +102,7 @@ const en = {
   'editor.create.tone': 'Tone (optional)',
   'editor.create.advanced': 'Advanced',
   'editor.create.useLlmJudge': 'Use LLM judge during refine',
+  'editor.create.scriptCheck': 'Check & fix narration script before generating slides',
   'editor.create.useVisionJudge': 'Use vision judge during refine (needs a vision preset in Settings)',
   'editor.create.threshold': 'Quality threshold',
   'editor.create.maxRefine': 'Max refine iterations',

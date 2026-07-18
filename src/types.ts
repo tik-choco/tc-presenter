@@ -555,6 +555,13 @@ export interface GenerateOptions {
   /** Whether evaluateDeck's LLM-judged metrics run during the refine loop
    * (rule-based metrics always run regardless). Default true. */
   useLlmJudge?: boolean
+  /** Whether generateDeck.ts's checkAndFixScript rule-checks the freshly
+   * written narration script (features/generate/scriptCheck.ts's
+   * checkScript) before any slide is generated from it, attempting one
+   * bounded LLM repair call when issues are found. Default true. Set false
+   * to skip the check entirely (e.g. to save the extra round-trip on a
+   * script that's already known-good, such as a hand-edited resume input). */
+  scriptCheck?: boolean
   /** Whether evaluateDeck's vision-LLM design-compliance metric runs during
    * the refine loop, in addition to the text-based judges above. Requires
    * `visionPresetId` (or the config's default preset) to point at a

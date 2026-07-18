@@ -16,6 +16,36 @@ function isEdgeLike(type: VisualElement['type']): boolean {
   return type === 'arrow' || type === 'edge'
 }
 
+/** Computes an arrow's shaft-end point (pulled back from the true endpoint
+ * by `size`) and its arrowhead triangle, all in the same 0-100 coordinate
+ * space the <line> itself is drawn in. This replaces an SVG <marker>: a
+ * marker auto-rotates its (isotropic) content to match the line's local
+ * angle and only *then* gets carried through this SVG's viewBox transform —
+ * which is non-uniform (`preserveAspectRatio="none"`, needed so edges track
+ * node positions expressed as plain left/top percentages) whenever the
+ * container isn't square. Rotate-then-nonuniform-scale shears an isotropic
+ * shape into a lopsided parallelogram on any non-45°/90° edge. Computing the
+ * triangle's vertices directly as real coordinates in this same space sidesteps
+ * that: they go through the exact same (even non-uniform) transform as the
+ * line's own endpoints, so the head stays a clean, correctly-attached
+ * triangle regardless of the container's aspect ratio. */
+function edgeArrowGeometry(x1: number, y1: number, x2: number, y2: number, size = 5) {
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const len = Math.hypot(dx, dy) || 1
+  const ux = dx / len
+  const uy = dy / len
+  const px = -uy
+  const py = ux
+  const baseX = x2 - ux * size
+  const baseY = y2 - uy * size
+  const halfW = size * 0.6
+  return {
+    lineEnd: { x: baseX, y: baseY },
+    points: `${x2},${y2} ${baseX + px * halfW},${baseY + py * halfW} ${baseX - px * halfW},${baseY - py * halfW}`,
+  }
+}
+
 function DiagramView({ kind, elements }: { kind: string; elements: VisualElement[] }) {
   const edges = elements.filter((e) => isEdgeLike(e.type))
   const nodes = elements.filter((e) => !isEdgeLike(e.type))
@@ -23,25 +53,29 @@ function DiagramView({ kind, elements }: { kind: string; elements: VisualElement
   return (
     <div class="slide-diagram" data-kind={kind}>
       <svg class="slide-diagram__edges" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <defs>
-          <marker id="slide-arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-            <path d="M0,0 L6,3 L0,6 Z" class="slide-diagram__arrowhead" />
-          </marker>
-        </defs>
-        {edges.map((e, i) => (
-          <line
-            key={i}
-            x1={e.position.x * 100}
-            y1={e.position.y * 100}
-            x2={(e.position.x + e.position.w) * 100}
-            y2={(e.position.y + e.position.h) * 100}
-            stroke={e.color || undefined}
-            class="slide-diagram__edge"
-            stroke-width={e.type === 'arrow' ? 1.4 : 1}
-            stroke-dasharray={e.type === 'edge' ? '3 2' : undefined}
-            marker-end={e.type === 'arrow' ? 'url(#slide-arrowhead)' : undefined}
-          />
-        ))}
+        {edges.map((e, i) => {
+          const x1 = e.position.x * 100
+          const y1 = e.position.y * 100
+          const x2 = (e.position.x + e.position.w) * 100
+          const y2 = (e.position.y + e.position.h) * 100
+          const isArrow = e.type === 'arrow'
+          const arrow = isArrow ? edgeArrowGeometry(x1, y1, x2, y2) : null
+          return (
+            <g key={i}>
+              <line
+                x1={x1}
+                y1={y1}
+                x2={arrow ? arrow.lineEnd.x : x2}
+                y2={arrow ? arrow.lineEnd.y : y2}
+                stroke={e.color || undefined}
+                class="slide-diagram__edge"
+                stroke-width={isArrow ? 1.4 : 1}
+                stroke-dasharray={e.type === 'edge' ? '3 2' : undefined}
+              />
+              {arrow && <polygon points={arrow.points} class="slide-diagram__arrowhead" />}
+            </g>
+          )
+        })}
       </svg>
       {nodes.map((n, i) => {
         const Icon = getIconForLabel(n.label)

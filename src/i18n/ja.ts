@@ -104,6 +104,7 @@ const ja: Partial<Record<TranslationKey, string>> = {
   'editor.create.tone': 'トーン(任意)',
   'editor.create.advanced': '詳細設定',
   'editor.create.useLlmJudge': 'refine 中に LLM 判定を使う',
+  'editor.create.scriptCheck': 'スライド生成前に原稿をチェック・修正する',
   'editor.create.useVisionJudge': 'refine 中に vision 判定を使う(設定タブで vision プリセットが必要)',
   'editor.create.threshold': '品質しきい値',
   'editor.create.maxRefine': '最大 refine 回数',

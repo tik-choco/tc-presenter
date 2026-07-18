@@ -11,7 +11,8 @@
 // front, as one structured document" approach.
 import type { ChatMessage } from '../../lib/llm'
 import type { Deck, DeckScore, GenerateOptions, Slide, SourceMaterial } from '../../types'
-import type { ScriptSegment } from './parse'
+import type { Script, ScriptSegment } from './parse'
+import type { ScriptIssue } from './scriptCheck'
 import { METRIC_IMPROVEMENT_HINTS } from '../../lib/evaluator'
 
 const MAX_SOURCE_CHARS = 2_000
@@ -166,6 +167,38 @@ Chapter grouping: if you write MORE THAN 6 body segments, group them into 2-5 ch
   const audience = opts.audience ? `\nTarget audience: ${opts.audience}` : ''
   const tone = opts.tone ? `\nTone: ${opts.tone}` : ''
   const user = `Source material:\n\n${formatSources(sources)}${audience}${tone}\n\nProduce the narration script JSON now.`
+
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ]
+}
+
+/** Builds the script-refinement prompt (features/generate/scriptCheck.ts's
+ * checkScript found rule violations in a freshly-written script — see
+ * generateDeck.ts's checkAndFixScript, the sole caller): given the full
+ * current script JSON plus the specific issues detected, asks for a revised
+ * FULL script in the exact same shape buildScriptMessages produces. Modeled
+ * on buildSlideRefineMessages below (same "keep what's good, fix only what's
+ * flagged" framing) but at the script level instead of one slide. Called at
+ * most ONCE per generateDeck() run — this is a single bounded repair pass,
+ * not a refine loop, so a stubborn local LLM can't spin here; the caller
+ * re-runs checkScript on the result and only keeps it if strictly better. */
+export function buildScriptRefineMessages(script: Script, issues: ScriptIssue[], opts: GenerateOptions): ChatMessage[] {
+  const system = `You are revising an existing presentation narration script to fix specific quality issues, without changing what it's about. Produce strict JSON only — no prose, no markdown fences.
+Output shape exactly: {"title": "string", "subtitle": "string", "segments": [ {"section": "intro|body|conclusion", "heading": "string", "narration": "string", "chapter": "string", "keyTakeaway": "string"} ]}
+Return the FULL script (every segment, in order) — preserve every segment and field that isn't flagged below exactly as given; only change what's needed to fix the listed issues. "narration" must be natural, complete spoken sentences in ${opts.language} (used verbatim as that slide's speaker notes) — never an outline or bullet fragments. Keep exactly ONE "intro" and exactly ONE "conclusion" segment unless an issue explicitly says otherwise.`
+
+  const currentScriptJson = JSON.stringify(script)
+  const feedback = issues
+    .map((issue) =>
+      issue.segmentIndex !== undefined
+        ? `- Segment ${issue.segmentIndex + 1} (heading: "${script.segments[issue.segmentIndex]?.heading ?? ''}"): ${issue.issue}`
+        : `- ${issue.issue}`,
+    )
+    .join('\n')
+
+  const user = `Current script JSON:\n${currentScriptJson}\n\nFix these issues (do not change anything not mentioned here):\n${feedback}\n\nProduce the revised full script JSON now.`
 
   return [
     { role: 'system', content: system },
