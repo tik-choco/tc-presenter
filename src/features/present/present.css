@@ -146,9 +146,35 @@
   text-align: center;
   font-size: 16px;
   line-height: 1.55;
-  white-space: pre-wrap;
   border-radius: var(--radius-m);
   animation: rise-in var(--dur-med) var(--ease-out);
+}
+
+.present-captions__primary {
+  white-space: pre-wrap;
+}
+
+/* Translated subtitle line (settings/localPrefs.ts's caption-translation
+   language), shown under the original once translateCaption() resolves —
+   smaller and dimmer so the original narration stays the visual anchor. */
+.present-captions__secondary {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  font-size: 0.85em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  opacity: 0.75;
+  animation: rise-in var(--dur-med) var(--ease-out);
+}
+
+/* Shown while the translation request is in flight — no border-top yet
+   since it isn't "the translation" so much as a placeholder for it. */
+.present-captions__secondary--pending {
+  border-top: none;
+  padding-top: 0;
+  opacity: 0.55;
+  font-style: italic;
 }
 
 .present-controls {
@@ -256,6 +282,19 @@
   border: 1px solid rgba(255, 255, 255, 0.25);
   background: rgba(255, 255, 255, 0.06);
   color: #fff;
+}
+
+/* Subtitle-translation target language, sits beside the Captions toggle
+   button — see PresentPlayer.tsx's captionLang state / localPrefs.ts's
+   CAPTION_TRANSLATION_LANGS. */
+.present-controls__caption-lang {
+  height: 38px;
+  padding: 0 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 12px;
 }
 
 .present-controls__rate {

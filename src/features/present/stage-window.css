@@ -97,9 +97,25 @@
   text-align: center;
   font-size: 16px;
   line-height: 1.55;
-  white-space: pre-wrap;
   border-radius: var(--radius-m);
   z-index: 5;
+  animation: stage-rise-in var(--dur-med) var(--ease-out);
+}
+
+.stage-window__captions-primary {
+  white-space: pre-wrap;
+}
+
+/* Translated subtitle line — mirrors present.css's .present-captions__secondary
+   (see PresentPlayer.tsx's captionLang / stageSync.ts's StageState.captionTranslation). */
+.stage-window__captions-secondary {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  font-size: 0.85em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  opacity: 0.75;
   animation: stage-rise-in var(--dur-med) var(--ease-out);
 }
 

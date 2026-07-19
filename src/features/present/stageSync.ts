@@ -46,6 +46,10 @@ export interface StageState {
   /** True while the presenter shows the slide-overview grid (Q&A) — mirrored
    * on the stage so the audience sees the same grid. */
   gridVisible: boolean
+  /** Current slide's translated caption line, when subtitle translation is on
+   * and the translation has arrived — undefined otherwise. Presenter-computed;
+   * the stage just renders it under the primary caption. */
+  captionTranslation?: string
 }
 
 export type PresenterMessage =

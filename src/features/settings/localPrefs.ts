@@ -223,3 +223,42 @@ export function savePlaybackSpeed(speed: PlaybackSpeed): void {
     // best-effort persistence only
   }
 }
+
+// PresentPlayer's caption translation target language (lib/
+// captionTranslation.ts's dual-language subtitle cache/translator). Off
+// ('') by default — translation costs an LLM call per slide, so it's opt-in
+// only, layered on top of the captionsEnabled toggle above rather than
+// replacing it.
+export const CAPTION_TRANSLATION_LANGS = ['en', 'ja', 'zh', 'ko', 'es', 'fr', 'de', 'pt'] as const
+export type CaptionTranslationLang = (typeof CAPTION_TRANSLATION_LANGS)[number]
+
+export const CAPTION_LANG_LABELS: Record<CaptionTranslationLang, string> = {
+  en: 'English',
+  ja: '日本語',
+  zh: '中文',
+  ko: '한국어',
+  es: 'Español',
+  fr: 'Français',
+  de: 'Deutsch',
+  pt: 'Português',
+}
+
+const CAPTION_TRANSLATION_LANG_KEY = 'tc-presenter:caption-translation-lang'
+
+export function loadCaptionTranslationLang(): CaptionTranslationLang | '' {
+  try {
+    const value = localStorage.getItem(CAPTION_TRANSLATION_LANG_KEY) ?? ''
+    return (CAPTION_TRANSLATION_LANGS as readonly string[]).includes(value) ? (value as CaptionTranslationLang) : ''
+  } catch {
+    return ''
+  }
+}
+
+export function saveCaptionTranslationLang(lang: CaptionTranslationLang | ''): void {
+  try {
+    if (lang) localStorage.setItem(CAPTION_TRANSLATION_LANG_KEY, lang)
+    else localStorage.removeItem(CAPTION_TRANSLATION_LANG_KEY)
+  } catch {
+    // best-effort persistence only
+  }
+}

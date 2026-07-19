@@ -151,7 +151,12 @@ export function StageWindow() {
               </div>
             )}
             {state.showCaptions && slide.speakerNotes.trim() && (
-              <div class="stage-window__captions">{slide.speakerNotes.trim()}</div>
+              <div class="stage-window__captions">
+                <div class="stage-window__captions-primary">{slide.speakerNotes.trim()}</div>
+                {state.captionTranslation && (
+                  <div class="stage-window__captions-secondary">{state.captionTranslation}</div>
+                )}
+              </div>
             )}
           </div>
           {state.gridVisible && <SlideGridOverlay deck={deck} currentIndex={state.currentIndex} />}

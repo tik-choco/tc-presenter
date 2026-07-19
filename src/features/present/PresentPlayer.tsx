@@ -44,18 +44,24 @@ import type { ComponentType } from 'preact/compat'
 import { SlideView } from '../../components/slides/SlideView'
 import { t } from '../../i18n'
 import { type BrowserSpeechHandle, createBrowserSpeech, isBrowserTtsSupported } from '../../lib/browserTts'
+import { getCachedCaptionTranslation, translateCaption } from '../../lib/captionTranslation'
 import { loadLlmConfig } from '../../lib/llmConfig'
 import { synthesizeSpeech } from '../../lib/tts'
 import {
+  CAPTION_LANG_LABELS,
+  CAPTION_TRANSLATION_LANGS,
+  type CaptionTranslationLang,
   loadCaptionsEnabled,
+  loadCaptionTranslationLang,
   loadPlaybackSpeed,
   PLAYBACK_SPEEDS,
   saveCaptionsEnabled,
+  saveCaptionTranslationLang,
   savePlaybackSpeed,
   type PlaybackSpeed,
 } from '../settings/localPrefs'
 import { SlideGridOverlay } from './SlideGridOverlay'
-import type { PresentPlayerProps } from '../../types'
+import type { PresentPlayerProps, Slide } from '../../types'
 import { loadPresenterCharacterSettings } from '../../vrm/characterSettings'
 import type { PresenterCharacterProps } from '../../vrm/PresenterCharacter'
 import './present.css'
@@ -155,6 +161,16 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   const [showCaptions, setShowCaptions] = useState<boolean>(() => loadCaptionsEnabled())
   const [gridVisible, setGridVisible] = useState(false)
 
+  // Subtitle translation (lib/captionTranslation.ts): off by default ('').
+  // `captionTranslations` maps slideId -> resolved translation text, filled
+  // in asynchronously as translateCaption() calls land (current slide and a
+  // one-slide prefetch, mirroring the narration prefetch below).
+  // `captionPending` tracks only the *current* slide's in-flight state, for
+  // the "translating…" placeholder.
+  const [captionLang, setCaptionLang] = useState<CaptionTranslationLang | ''>(() => loadCaptionTranslationLang())
+  const [captionTranslations, setCaptionTranslations] = useState<Record<string, string>>({})
+  const [captionPending, setCaptionPending] = useState(false)
+
   // Presenter-tool / stage-window sync (stageSync.ts). `stageOpen` covers
   // both "we opened it and it's still open" and "a stage window said hello"
   // (e.g. the presenter reloaded but an already-open stage reconnected) —
@@ -177,6 +193,17 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   const fallbackStartRef = useRef<number | null>(null)
   const fallbackTimerId = useRef<number | null>(null)
   const indexTokenRef = useRef(0)
+  // Stale-guard for async caption-translation resolution (same "bump a
+  // counter, compare on resolve" pattern as indexTokenRef above) — only
+  // guards the `captionPending` flag; captionTranslations entries are safe
+  // to accept unconditionally (see the effect below).
+  const captionTokenRef = useRef(0)
+  // Which language captionTranslationsRef currently holds entries for, so a
+  // captionLang change can synchronously drop stale-language entries before
+  // any cache/network lookup runs — otherwise a translation cached under the
+  // previous language would appear to already be "the" translation for the
+  // new one and never get refetched.
+  const captionTranslationsLangRef = useRef<CaptionTranslationLang | ''>('')
 
   const deckRef = useRef(deck)
   useEffect(() => {
@@ -206,23 +233,32 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   useEffect(() => {
     gridVisibleRef.current = gridVisible
   }, [gridVisible])
+  const captionLangRef = useRef(captionLang)
+  useEffect(() => {
+    captionLangRef.current = captionLang
+  }, [captionLang])
+  const captionTranslationsRef = useRef(captionTranslations)
+  useEffect(() => {
+    captionTranslationsRef.current = captionTranslations
+  }, [captionTranslations])
   // Synced further down, once buildStageTotal/speaking are computed — kept
   // as refs (rather than reading state directly) so buildStageState() below
   // never closes over a stale value from whichever render created it.
   const buildStageTotalRef = useRef<number | undefined>(undefined)
   const speakingRef = useRef(false)
 
-  const buildStageState = useCallback(
-    (): StageState => ({
+  const buildStageState = useCallback((): StageState => {
+    const currentSlide = deckRef.current.slides[currentIndexRef.current]
+    return {
       deck: deckRef.current,
       currentIndex: currentIndexRef.current,
       buildStageTotal: buildStageTotalRef.current,
       showCaptions: showCaptionsRef.current,
       speaking: speakingRef.current,
       gridVisible: gridVisibleRef.current,
-    }),
-    [],
-  )
+      captionTranslation: currentSlide ? captionTranslationsRef.current[currentSlide.id] : undefined,
+    }
+  }, [])
 
   // Create the presenter endpoint once per mount. `onHello` fires whenever a
   // stage window (re)connects — including a stage that was already open
@@ -490,6 +526,86 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fallbackCps])
 
+  // Subtitle-translation loader (lib/captionTranslation.ts). Fires for the
+  // current slide and a one-slide prefetch (mirroring the narration
+  // prefetch above) whenever captions+a target language are on and the
+  // slide/deck changes. Cache hits resolve synchronously; misses kick off
+  // translateCaption() and land in `captionTranslations` whenever they
+  // arrive — the effect itself never awaits them.
+  //
+  // Deliberately no AbortController here: translateCaption() dedupes
+  // concurrent calls per (deck, slide, lang) by sharing one in-flight
+  // promise, so aborting on cleanup would poison exactly the common path —
+  // advancing onto a slide whose prefetch is still in flight would kill the
+  // shared request the new effect run then re-receives. Letting every
+  // started translation run to completion is always useful anyway: the
+  // result lands in the persistent cache even when the UI has moved on.
+  // Stale results are instead filtered at resolution time (deck id and
+  // language guards below).
+  useEffect(() => {
+    const token = ++captionTokenRef.current
+
+    // A language switch invalidates every previously-resolved translation
+    // (they're for the old language) — drop them synchronously, ref first,
+    // so the cache-check below never mistakes a stale-language entry for a
+    // fresh one.
+    if (captionTranslationsLangRef.current !== captionLang) {
+      captionTranslationsLangRef.current = captionLang
+      captionTranslationsRef.current = {}
+      setCaptionTranslations({})
+    }
+
+    if (!showCaptions || !captionLang) {
+      setCaptionPending(false)
+      return
+    }
+
+    const lang = captionLang
+    const deckId = deck.id
+    const deckLang = deck.lang.toLowerCase()
+    // Translating into the deck's own content language would just repeat
+    // the original narration — skip it entirely.
+    if (deckLang.startsWith(lang) || lang.startsWith(deckLang)) {
+      setCaptionPending(false)
+      return
+    }
+
+    setCaptionPending(false)
+
+    function loadOne(target: Slide | undefined, isCurrent: boolean) {
+      if (!target) return
+      const narration = target.speakerNotes.trim()
+      if (!narration) return
+      if (captionTranslationsRef.current[target.id]) return
+
+      const cacheHit = getCachedCaptionTranslation(deckId, target.id, lang, narration)
+      if (cacheHit) {
+        setCaptionTranslations((prev) => ({ ...prev, [target.id]: cacheHit }))
+        return
+      }
+
+      if (isCurrent) setCaptionPending(true)
+      translateCaption({ deckId, slideId: target.id, lang, narration })
+        .then((text) => {
+          // A different deck has loaded, or the target language changed,
+          // since this request started — the result no longer belongs in
+          // the live map (it's still cached for its own language).
+          if (deckRef.current.id !== deckId) return
+          if (captionTranslationsLangRef.current !== lang) return
+          setCaptionTranslations((prev) => ({ ...prev, [target.id]: text }))
+          if (isCurrent && captionTokenRef.current === token) setCaptionPending(false)
+        })
+        .catch(() => {
+          // Left un-cached — revisiting this slide re-triggers the effect
+          // and retries naturally.
+          if (isCurrent && captionTokenRef.current === token) setCaptionPending(false)
+        })
+    }
+
+    loadOne(deck.slides[currentIndex], true)
+    loadOne(deck.slides[currentIndex + 1], false)
+  }, [showCaptions, captionLang, currentIndex, deck])
+
   // Elapsed-time ticker for the progress readout — only runs while playing;
   // reads through refs so it stays correct across slide changes without
   // needing to be re-created for that reason too.
@@ -616,6 +732,11 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
     })
   }, [])
 
+  const handleCaptionLangChange = useCallback((next: CaptionTranslationLang | '') => {
+    setCaptionLang(next)
+    saveCaptionTranslationLang(next)
+  }, [])
+
   // Opening the grid pauses playback (it's for Q&A, browsing while narration
   // keeps advancing would be confusing) — closing it leaves play state alone.
   const toggleGrid = useCallback(() => {
@@ -731,9 +852,18 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   // Broadcast a full snapshot to the stage window whenever anything it
   // renders changes. Full snapshots (not deltas) keep the protocol
   // self-healing per stageSync.ts's design notes.
+  const captionTranslation = slide ? captionTranslations[slide.id] : undefined
   useEffect(() => {
-    presenterEndpointRef.current?.publish({ deck, currentIndex, buildStageTotal, showCaptions, speaking, gridVisible })
-  }, [deck, currentIndex, buildStageTotal, showCaptions, speaking, gridVisible])
+    presenterEndpointRef.current?.publish({
+      deck,
+      currentIndex,
+      buildStageTotal,
+      showCaptions,
+      speaking,
+      gridVisible,
+      captionTranslation,
+    })
+  }, [deck, currentIndex, buildStageTotal, showCaptions, speaking, gridVisible, captionTranslation])
 
   if (deck.slides.length === 0 || !slide) {
     return (
@@ -821,7 +951,18 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
         <div class="present-notice">{stagePopupBlocked ? t('present.stagePopupBlocked') : noticeText}</div>
       )}
 
-      {showCaptions && slide.speakerNotes.trim() && <div class="present-captions">{slide.speakerNotes.trim()}</div>}
+      {showCaptions && slide.speakerNotes.trim() && (
+        <div class="present-captions">
+          <div class="present-captions__primary">{slide.speakerNotes.trim()}</div>
+          {captionTranslation ? (
+            <div class="present-captions__secondary">{captionTranslation}</div>
+          ) : captionPending ? (
+            <div class="present-captions__secondary present-captions__secondary--pending">
+              {t('present.captionTranslationPending')}
+            </div>
+          ) : null}
+        </div>
+      )}
 
       <div class="present-controls">
         <button
@@ -909,6 +1050,20 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
         >
           <Captions size={18} />
         </button>
+        <select
+          class="present-controls__caption-lang"
+          value={captionLang}
+          onChange={(e) => handleCaptionLangChange((e.target as HTMLSelectElement).value as CaptionTranslationLang | '')}
+          aria-label={t('present.captionLangLabel')}
+          title={t('present.captionLangLabel')}
+        >
+          <option value="">{t('present.captionLangOff')}</option>
+          {CAPTION_TRANSLATION_LANGS.map((lang) => (
+            <option key={lang} value={lang}>
+              {CAPTION_LANG_LABELS[lang]}
+            </option>
+          ))}
+        </select>
         <button
           type="button"
           class={`present-controls__btn${stageOpen ? ' present-controls__btn--active' : ''}`}
