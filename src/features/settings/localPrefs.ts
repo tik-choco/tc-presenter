@@ -24,6 +24,57 @@ export function saveNetworkEnabled(enabled: boolean): void {
   }
 }
 
+// "Become an AI Network provider" role (lib/aiNetwork.ts's re-exported
+// useNetworkProvider) — independent of the consumer toggle above, mirroring
+// tc-translate's networkProviderEnabled. Local-only: which of this app's own
+// shared presets get advertised into the room is a per-device choice, not
+// something other tc-* apps need to see.
+const AI_NETWORK_PROVIDER_ENABLED_KEY = 'tc-presenter:ai-network-provider-enabled'
+
+export function loadNetworkProviderEnabled(): boolean {
+  try {
+    return localStorage.getItem(AI_NETWORK_PROVIDER_ENABLED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function saveNetworkProviderEnabled(enabled: boolean): void {
+  try {
+    if (enabled) localStorage.setItem(AI_NETWORK_PROVIDER_ENABLED_KEY, '1')
+    else localStorage.removeItem(AI_NETWORK_PROVIDER_ENABLED_KEY)
+  } catch {
+    // best-effort persistence only
+  }
+}
+
+// Preset ids from tc-shared-llm-config-v1 that this device advertises to the
+// AI Network room while providerEnabled is on. Never includes a
+// `mist-network://`-origin preset (lib/networkModels.ts's
+// isNetworkProviderBaseUrl) — callers are responsible for filtering those out
+// before offering them in the share checklist, same re-share-loop guard as
+// tc-translate.
+const AI_NETWORK_PROVIDER_PRESET_IDS_KEY = 'tc-presenter:ai-network-provider-preset-ids'
+
+export function loadNetworkProviderPresetIds(): string[] {
+  try {
+    const raw = localStorage.getItem(AI_NETWORK_PROVIDER_PRESET_IDS_KEY)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+export function saveNetworkProviderPresetIds(ids: string[]): void {
+  try {
+    localStorage.setItem(AI_NETWORK_PROVIDER_PRESET_IDS_KEY, JSON.stringify(ids))
+  } catch {
+    // best-effort persistence only
+  }
+}
+
 // tc-shared-llm-config-v1 preset id to use for the vision judge (lib/
 // evaluator/visionJudge.ts). Local, not shared with the rest of the
 // tik-choco app family (unlike the presets themselves) — this is purely
@@ -59,19 +110,33 @@ export function saveVisionPresetId(presetId: string): void {
 // per-run model configuration (and can still override per-run).
 const GENERATE_ROLES_KEY = 'tc-presenter:generate-roles'
 
+export type PipelineMode = 'plan_fanout' | 'script_first'
+
 export interface GenerateRolePrefs {
-  /** Preset for the planning/orchestrator calls (script, evaluation, batch
-   * refine). "" = the shared config's defaultPresetId. */
+  /** Which pipeline shape generation runs (types.ts's
+   * GenerateOptions.pipelineMode): 'plan_fanout' (default — the
+   * tc-translate-style split: the orchestrator emits only a compact segment
+   * plan and each fan-out worker writes its segment's narration + slide,
+   * keeping the expensive orchestrator preset's token spend to the one plan
+   * call) or 'script_first' (legacy: the orchestrator writes the full
+   * narration up front and workers only visualize). */
+  pipelineMode: PipelineMode
+  /** Preset for the planning/orchestrator calls. In 'plan_fanout' this is
+   * ONLY the single deck-plan call; in 'script_first' it also covers the
+   * full-script write, evaluation and batch refine. "" = the shared
+   * config's defaultPresetId. */
   orchestratorPresetId: string
-  /** Preset for the fan-out worker calls (per-segment slides, per-slide
-   * refine). "" = same as the orchestrator. */
+  /** Preset for the fan-out worker calls (per-segment narration+slides in
+   * 'plan_fanout' / slides only in 'script_first', plus per-slide refine).
+   * "" = same as the orchestrator. */
   workerPresetId: string
-  /** How many segment-slide workers run concurrently (1 = sequential).
+  /** How many segment workers run concurrently (1 = sequential).
    * Clamped to generateDeck.ts's own 1..8 bound. */
   workerConcurrency: number
 }
 
 export const DEFAULT_GENERATE_ROLE_PREFS: GenerateRolePrefs = {
+  pipelineMode: 'plan_fanout',
   orchestratorPresetId: '',
   workerPresetId: '',
   workerConcurrency: 1,
@@ -90,6 +155,7 @@ export function loadGenerateRolePrefs(): GenerateRolePrefs {
     if (parsed === null || typeof parsed !== 'object') return { ...DEFAULT_GENERATE_ROLE_PREFS }
     const record = parsed as Record<string, unknown>
     return {
+      pipelineMode: record.pipelineMode === 'script_first' ? 'script_first' : 'plan_fanout',
       orchestratorPresetId: typeof record.orchestratorPresetId === 'string' ? record.orchestratorPresetId : '',
       workerPresetId: typeof record.workerPresetId === 'string' ? record.workerPresetId : '',
       workerConcurrency: clampWorkerConcurrency(typeof record.workerConcurrency === 'number' ? record.workerConcurrency : 1),

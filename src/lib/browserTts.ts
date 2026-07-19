@@ -1,7 +1,7 @@
-// Web Speech API (speechSynthesis) wrapper — the 'browser' engine variant of
-// lib/ttsLangRules.ts, for languages/voices better served by the OS's
-// built-in synthesizer (and for use with no LLM/TTS provider configured at
-// all, unlike the HTTP-based lib/tts.ts).
+// Web Speech API (speechSynthesis) wrapper — the 'browser' narration engine
+// (features/present/ttsTarget.ts's ResolvedNarrationTarget 'browser'
+// variant), for speaking with the OS's built-in synthesizer when no
+// LLM/TTS provider is involved (unlike the HTTP-based lib/tts.ts).
 //
 // Known Chrome bug worked around here: a single long SpeechSynthesisUtterance
 // silently stops partway through once its text passes a few hundred

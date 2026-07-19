@@ -148,6 +148,12 @@ async function runJob(job: GenerateJob, signal: AbortSignal): Promise<void> {
         useLlmJudge: job.opts.useLlmJudge,
         useVisionJudge: job.opts.useVisionJudge,
         visionPresetId: job.opts.visionPresetId,
+        // Same preset routing as generateDeck's in-pipeline evaluation:
+        // plan_fanout reserves the orchestrator preset for the plan call, so
+        // this final score runs on the worker preset there.
+        presetId:
+          job.opts.pipelineMode === 'plan_fanout' ? (job.opts.workerPresetId ?? job.opts.presetId) : job.opts.presetId,
+        connection: job.opts.connection,
       })
       patchJob(job.id, { score })
     } catch {

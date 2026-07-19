@@ -465,6 +465,13 @@ export interface ScriptSegment {
    * buildSegmentSlideMessages, feeding the takeaway_presence metric.
    * Undefined when the script writer didn't supply one. */
   keyTakeaway?: string
+  /** Plan-fan-out pipeline only (GenerateOptions.pipelineMode
+   * 'plan_fanout'): the orchestrator's terse keyword outline of what this
+   * segment must cover — the worker call's writing instruction. `narration`
+   * is seeded with this same text until the worker's authored narration
+   * replaces it (in the generated slide's speakerNotes). Undefined in
+   * script-first mode. */
+  brief?: string
 }
 
 export interface Script {
@@ -588,6 +595,22 @@ export interface GenerateOptions {
    * single-call refine, which preserves the most cross-slide context and
    * suits large hosted models. */
   refineStrategy?: 'per_slide' | 'batch'
+  /** How the pipeline divides work between the orchestrator preset
+   * (`presetId`) and the worker preset (`workerPresetId`).
+   * 'script_first' (default): the orchestrator writes the FULL spoken
+   * narration up front in one large call and workers only visualize each
+   * segment — the historical shape.
+   * 'plan_fanout' (modeled on ../tc-translate's planTranslationFanOut ->
+   * per-language-worker split): the orchestrator emits only a compact
+   * segment PLAN (headings + terse briefs, no narration) and each fan-out
+   * worker call writes its segment's narration AND slide in one request —
+   * shifting the bulk of output tokens off the (typically expensive)
+   * orchestrator preset onto the cheaper worker preset. In this mode the
+   * LLM judge and batch refine also run on the worker preset, so the
+   * orchestrator preset is spent on the single plan call only;
+   * checkAndFixScript is skipped (its narration rules don't apply to
+   * keyword briefs). */
+  pipelineMode?: 'script_first' | 'plan_fanout'
   /** Preset for the per-segment slide-generation "worker" calls (and the
    * per-slide refine calls), when it should differ from the main `presetId`
    * — the orchestrator/worker split: a strong model plans (script, batch

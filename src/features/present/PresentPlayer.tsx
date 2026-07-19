@@ -5,10 +5,11 @@
 // is unconfigured or a synthesis call fails, falls back to an
 // estimated-reading-time auto-advance timer (configurable chars/second) so
 // the deck still self-narrates its pacing without audio. The narration
-// target is resolved per-deck-language (ttsTarget.ts's resolveNarrationTarget,
-// backed by lib/ttsLangRules.ts) and may route to the browser's built-in
-// SpeechSynthesis (lib/browserTts.ts) instead of a remote TTS call — that
-// path never produces a duration up-front, so its elapsed-time bookkeeping
+// target comes from ttsTarget.ts's resolveNarrationTarget (the shared
+// config.tts entry). A 'browser' target (built-in SpeechSynthesis via
+// lib/browserTts.ts) is still handled below for type-completeness — the
+// per-language rules that used to produce one were removed — and that path
+// never produces a duration up-front, so its elapsed-time bookkeeping
 // reuses the same spentRef/fallbackStartRef accounting as the estimated-time
 // fallback below.
 //
@@ -290,7 +291,7 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   // mid-presentation even if Settings is edited in another tab.
   const [ttsTarget] = useState<ResolvedNarrationTarget | null>(() => {
     const config = loadLlmConfig()
-    return config ? resolveNarrationTarget(config, deck.lang, presetId) : null
+    return config ? resolveNarrationTarget(config, presetId) : null
   })
 
   // Same "resolved once at mount" rationale as ttsTarget above — the

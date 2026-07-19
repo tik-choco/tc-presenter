@@ -281,6 +281,113 @@ Produce this one slide's JSON now.`
   ]
 }
 
+/** Builds the plan-fan-out orchestrator prompt (GenerateOptions.pipelineMode
+ * === 'plan_fanout', modeled on ../tc-translate's planTranslationFanOut →
+ * per-worker fan-out): ONE compact call that plans the deck's segment
+ * structure WITHOUT writing any narration — each fan-out worker call
+ * (buildSegmentAuthorMessages) writes its own segment's narration + slide
+ * from this plan afterwards. Deliberately the cheapest possible orchestrator
+ * output (headings + terse keyword briefs) so an expensive frontier preset
+ * can plan while the bulk of output tokens lands on the worker preset. */
+export function buildDeckPlanMessages(sources: SourceMaterial[], opts: GenerateOptions): ChatMessage[] {
+  const capLine = opts.maxSlides
+    ? `Keep the TOTAL segment count (intro + body + conclusion) at or under ${opts.maxSlides}.`
+    : 'Choose however many segments the material naturally supports — a typical deck runs 6-20 total segments, but let the content decide; do not pad or compress artificially.'
+
+  const system = `You are the orchestrator of a fan-out slide-generation pipeline. PLAN the presentation's segment structure only — do NOT write any spoken narration; independent worker calls will each write one segment's narration and slide from your plan afterwards. Produce strict JSON only — no prose, no markdown fences.
+Output shape exactly:
+{"title": "deck title in ${opts.language}, punchy and ~10-20 characters — becomes the bold white headline on the cover card, so keep it short", "subtitle": "optional ONE short line (<=30 characters) cover subtitle in ${opts.language}, or \\"\\"", "segments": [ {"section": "intro|body|conclusion", "heading": "short topic label in ${opts.language}, 10-20 characters, becomes that slide's title", "brief": "terse keyword outline in ${opts.language}, ~20-60 characters: the specific facts/terms/numbers this segment must cover — a writing instruction for the worker, NEVER spoken sentences", "chapter": "chapter/section name in ${opts.language} shared by every body segment in the same chapter, or \\"\\" — see the grouping rule below", "keyTakeaway": "ONE sentence in ${opts.language}, ~40 characters or fewer, stating this segment's implication/conclusion — never a paraphrase of the brief. Required for every segment, all sections."} ]}
+Structure: exactly ONE "intro" segment (motivation/context), one or more "body" segments — each ONE coherent idea/step/finding, since each becomes exactly ONE slide, so keep every body segment focused on a SINGLE point — and exactly ONE "conclusion" segment (wrap-up / takeaway). Follow a background -> objective -> proposal/content -> evaluation -> conclusion narrative arc across the body segments (adapt to the source material's actual subject).
+Progressive disclosure: when a single topic carries more content than one slide comfortably holds, plan it as 2-4 CONSECUTIVE body segments that each add exactly ONE new point/step/detail on top of the previous one. These still count toward the total segment cap below.
+${capLine}
+Chapter grouping: if you plan MORE THAN 6 body segments, group them into 2-5 chapters by giving every body segment in the same chapter the exact SAME "chapter" string (consecutive body segments only — never interleave two chapters). Leave "chapter":"" when you plan 6 or fewer body segments, and always for intro/conclusion segments.
+Keep the whole plan compact — "brief" is a keyword outline for the worker, not prose; your total output should be a small fraction of a full script.`
+
+  const audience = opts.audience ? `\nTarget audience: ${opts.audience}` : ''
+  const tone = opts.tone ? `\nTone: ${opts.tone}` : ''
+  const user = `Source material:\n\n${formatSources(sources)}${audience}${tone}\n\nProduce the deck plan JSON now.`
+
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ]
+}
+
+/** Builds the plan-fan-out WORKER prompt (pipelineMode 'plan_fanout',
+ * mirroring ../tc-translate's translateSegmentForLanguage worker): ONE call
+ * that both WRITES this segment's full spoken narration (from the
+ * orchestrator's terse brief) and generates the ONE slide visualizing it —
+ * unlike buildSegmentSlideMessages, which only visualizes an already-written
+ * narration. The whole plan's ordered heading list is passed as context so
+ * independently-generated narrations still flow as one continuous talk. */
+export function buildSegmentAuthorMessages(
+  segment: ScriptSegment,
+  segmentNumber: number,
+  totalSegments: number,
+  script: Script,
+  sources: SourceMaterial[],
+  opts: GenerateOptions,
+  /** Same deck-wide variety-plan hint as buildSegmentSlideMessages'. */
+  layoutHint?: string,
+): ChatMessage[] {
+  const typeHint =
+    segment.section === 'conclusion'
+      ? 'a "summary" or "content" slide'
+      : segment.section === 'intro'
+        ? 'a "content", "agenda", or "diagram" slide (never "title" — the deck cover is generated separately)'
+        : 'whichever of content/diagram/data_table/chart/quote best fits this segment'
+
+  const takeawayLine = segment.keyTakeaway
+    ? `This segment's key takeaway is: "${segment.keyTakeaway}". Render it as exactly ONE calloutBox block (heading = short label, bullets = the takeaway, max 4 bullets) — or, only if a calloutBox would be redundant with the slide's single main block, as one clearly emphasized one-line conclusion element instead. The takeaway must be visibly stated on the slide, not just implied by the diagram/data.`
+    : ''
+  const layoutHintLine = layoutHint
+    ? `Deck-wide variety plan: this slide was pre-assigned the block kind "${layoutHint}" so neighboring slides don't all share one structure. Use it — unless this segment's content clearly fits a different block kind better, in which case content wins over the assignment.`
+    : ''
+  const progressiveDisclosureLine = `Progressive disclosure: if this segment continues the SAME topic as the immediately preceding segment in the plan (a multi-part breakdown too dense for one slide), keep the slide's structure simple and consistent with that continuation — add/change/highlight only 1-2 elements for this step rather than redesigning from scratch. Keep the total element count within the 6-8 (ideally 3-5) budget from the style guide below.`
+  const titleUniquenessLine = `If this slide's subject is a split/continuation of the same theme as another segment in the plan, suffix the title with a circled number (①②③...) so no two slide titles are ever identical — never reuse an unlabeled duplicate title.`
+
+  const system = `You are a slide-generation worker in a fan-out pipeline: the orchestrator has already planned the whole deck (plan in the user message); your job is to write ONE segment's full spoken narration AND generate the ONE slide that visualizes it. Produce strict JSON only — no prose, no markdown fences.
+Output shape exactly: {"narration": "the full spoken text for this segment in ${opts.language} — 80-200 words of natural, complete spoken sentences (never an outline or bullet fragments); used verbatim as this slide's speaker notes", "slide": ${slideJsonShape()}}
+This is segment ${segmentNumber} of ${totalSegments} (section: "${segment.section}"). Suggested slide type: ${typeHint}. Never use "type":"title" or "type":"section_break" here — the cover and section-transition dividers are inserted mechanically elsewhere in the pipeline.
+Narration continuity: the plan lists every segment in speaking order — write narration that flows naturally out of the previous segment's topic and into the next one's; introduce the talk only in the "intro" segment and wrap up only in the "conclusion" segment.
+Slide content: choose the ONE content block (or up to 2 paired with "column") that best visualizes your narration and put it in the slide's "blocks" — do NOT restate the narration as a wall of bullets or paragraphs; extract only the key terms/numbers/structure. Leave "body"/"visual" as their empty defaults when "blocks" is used.
+Pick "layout" to match: "diagram_centered" for the common case of one block plus a short caption; "two_column_text_diagram" only when two blocks are paired via "column"; "grid" for a boxGroup grid or gridHeatmap block; "single_column" otherwise.
+${takeawayLine}
+${progressiveDisclosureLine}
+${layoutHintLine}
+${titleUniquenessLine}
+${getBlockGuide(opts)}
+${getBlockShapes(opts)}
+${getStyleGuide(opts)}
+The slide's title should be a specific, punchy restatement of "${segment.heading}" (10-20 characters). All content in ${opts.language}. Do not include an "index" field; the slide's "speakerNotes" may be "" — it is replaced by your "narration".`
+
+  const planOutline = script.segments
+    .map((s, i) => {
+      const marker = i === segmentNumber - 1 ? '  <= YOUR SEGMENT' : ''
+      const chapter = s.chapter ? ` [${s.chapter}]` : ''
+      return `${i + 1}. (${s.section})${chapter} ${s.heading}${marker}`
+    })
+    .join('\n')
+
+  const audience = opts.audience ? `\nTarget audience: ${opts.audience}` : ''
+  const tone = opts.tone ? `\nTone: ${opts.tone}` : ''
+  const user = `Deck: "${script.title}"${script.subtitle ? ` — ${script.subtitle}` : ''}
+Plan (speaking order):
+${planOutline}
+
+Your segment's brief (the content to cover): ${segment.brief || segment.narration}${segment.keyTakeaway ? `\nKey takeaway to state: ${segment.keyTakeaway}` : ''}${audience}${tone}
+
+Source material excerpts (for factual grounding; use only what's relevant to this segment):
+${formatSources(sources)}
+
+Produce this segment's {"narration", "slide"} JSON now.`
+
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ]
+}
+
 /** Builds the regeneration prompt for a refine iteration: the current deck's
  * slides plus targeted feedback drawn from whichever metrics scored lowest
  * (weights.ts's METRIC_IMPROVEMENT_HINTS + each metric's dynamic `reason` —

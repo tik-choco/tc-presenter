@@ -5,11 +5,18 @@
 // Contract (types.ts): default-export a Preact component accepting
 // `SettingsTabProps` (currently empty — this tab manages its own state
 // directly against lib/llmConfig.ts rather than through app.tsx).
-import { useEffect, useState } from 'preact/hooks'
-import type { JSX } from 'preact'
-import { RefreshCw, Sparkles } from 'lucide-preact'
-import { MESSAGES_EN, MESSAGES_JA } from '@tik-choco/mistai'
-import { useConsumerConnection, useConsumerStatus, ConsumerStatusIndicator } from '@tik-choco/mistai/preact'
+//
+// UI shape follows tc-docs/drafts/llm-settings-common-v1.md (ported from
+// tc-translate's SettingsModal): three tabs — AI接続 (provider/preset flat
+// card grids, append-only), AI Network (Room ID + consumer/provider role
+// cards), タスク (one row per generation task + TTS, label tooltips instead
+// of always-visible hint paragraphs). Locale + onboarding replay stay
+// outside the tabs (always visible, like tc-translate's language row above
+// its tab bar).
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
+import { Network, Play, Plus, RefreshCw, Server, Sparkles } from 'lucide-preact'
+import { MESSAGES_EN, MESSAGES_JA, type LlmCallFn, type SynthesizeFn } from '@tik-choco/mistai'
+import { ConsumerStatusIndicator, ProviderStatusPanel, useConsumerConnection, useConsumerStatus } from '@tik-choco/mistai/preact'
 import '@tik-choco/mistai/ui.css'
 import './settings.css'
 import { getLocale, setLocale, subscribeLocale, t, type Locale } from '../../i18n'
@@ -22,26 +29,32 @@ import {
   loadLlmConfig,
   normalizeBaseUrl,
   resolvePreset,
+  resolveVoice,
   saveLlmConfig,
   subscribeLlmConfig,
   type LlmProviderV1,
   type ModelPresetV1,
+  type ResolvedLlmTargetV1,
   type SharedLlmConfigV1,
   type VoiceConfigV1,
 } from '../../lib/llmConfig'
-import { networkClient } from '../../lib/aiNetwork'
+import { advertisedModelName, isNetworkProviderBaseUrl, NETWORK_VOICE_AUTO_MODEL } from '../../lib/networkModels'
+import { createMistNode, networkClient, NODE_ID_STORAGE_KEY, useNetworkProvider } from '../../lib/aiNetwork'
+import { requestApiChatCompletionStreaming } from '../../lib/llm'
 import { requestOnboarding } from '../../lib/onboarding'
 import { synthesizeSpeech } from '../../lib/tts'
-import { isBrowserTtsSupported, listBrowserVoices, createBrowserSpeech } from '../../lib/browserTts'
-import { loadTtsLangRules, saveTtsLangRules, normalizeLang, type TtsEngineRule, type TtsLangRulesV1 } from '../../lib/ttsLangRules'
 import type { SettingsTabProps } from '../../types'
 import {
   clampWorkerConcurrency,
   loadGenerateRolePrefs,
   loadNetworkEnabled,
+  loadNetworkProviderEnabled,
+  loadNetworkProviderPresetIds,
   loadVisionPresetId,
   saveGenerateRolePrefs,
   saveNetworkEnabled,
+  saveNetworkProviderEnabled,
+  saveNetworkProviderPresetIds,
   saveVisionPresetId,
   type GenerateRolePrefs,
 } from './localPrefs'
@@ -53,18 +66,34 @@ const LM_STUDIO_BASE_URL = 'http://localhost:1234/v1'
  * 空文字にすればパラメータ自体を送らない従来の挙動に戻せる(lib/llm.ts の apiConfig 参照)。 */
 const DEFAULT_REASONING_EFFORT = 'none'
 
-/** reasoning_effort の選択肢(tc-town の REASONING_EFFORT_OPTIONS と同じ並び)。
+/** reasoning_effort の選択肢(tc-docs/llm-settings-common-v1.md §3.1 の共通並び)。
  * 空文字(=パラメータを送らない)は選択肢とは別に「未指定」optionとして出す。 */
-const REASONING_EFFORT_OPTIONS = ['none', 'low', 'medium', 'high'] as const
+const REASONING_EFFORT_OPTIONS = ['none', 'minimal', 'low', 'medium', 'high'] as const
 
 function cloneConfig(config: SharedLlmConfigV1): SharedLlmConfigV1 {
   return { ...config, providers: [...config.providers], presets: [...config.presets], network: { ...config.network } }
 }
 
+function providerLabelFor(config: SharedLlmConfigV1, providerId: string): string {
+  const provider = config.providers.find((p) => p.id === providerId)
+  if (!provider) return t('settings.llm.unknownConnection')
+  return provider.label || provider.baseUrl
+}
+
+function hostLabelFor(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host || baseUrl
+  } catch {
+    return baseUrl
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Model/voice pickers (fetch from the provider's /models or voices endpoint,
 // with a manual-entry fallback for offline use or endpoints that can't list
-// options). Ported from tc-news's src/views/SettingsView.tsx.
+// options). Ported from tc-news's src/views/SettingsView.tsx. useModelOptions/
+// useVoiceOptions (lib/models.ts) already skip the fetch for a
+// `mist-network://` baseUrl (llm-settings-common-v1.md §5.3 checklist #2).
 
 /** Dedupes `options` against the current `value` (so a manually-typed or
  * stale value stays selectable) and sorts for a stable <select> order. Shared
@@ -152,14 +181,14 @@ function SelectWithFallback(props: SelectWithFallbackProps) {
 
 /** Model picker: a <select> populated from useModelOptions(baseUrl, apiKey),
  * a refresh button, and a manual-entry fallback for endpoints that can't
- * list models. Shared by the LLM preset form's model field and the TTS
- * section's model field. */
+ * list models. Shared by the LLM preset card's model field and the TTS
+ * task row's voice field. */
 function ModelField(props: { id: string; value: string; baseUrl: string; apiKey: string; onChange: (model: string) => void }) {
   const { id, value, baseUrl, apiKey, onChange } = props
   const { options, status, errorMessage, refresh } = useModelOptions(baseUrl, apiKey)
 
   const selectableOptions = mergeOptions(value, options)
-  const canFetch = baseUrl.trim().length > 0
+  const canFetch = baseUrl.trim().length > 0 && !isNetworkProviderBaseUrl(baseUrl)
   const statusText =
     status === 'loading'
       ? t('common.loading')
@@ -186,18 +215,18 @@ function ModelField(props: { id: string; value: string; baseUrl: string; apiKey:
   )
 }
 
-/** Voice picker for the TTS section: mirrors ModelField's UX but sources
- * options from useVoiceOptions(baseUrl, apiKey). Most OpenAI-compatible TTS
- * endpoints don't expose a voices-listing endpoint, so on a fetch error we
- * fall back to OPENAI_TTS_VOICES (the standard OpenAI voice set) instead of
- * leaving the select empty. */
+/** Voice picker: mirrors ModelField's UX but sources options from
+ * useVoiceOptions(baseUrl, apiKey). Most OpenAI-compatible TTS endpoints
+ * don't expose a voices-listing endpoint, so on a fetch error we fall back
+ * to OPENAI_TTS_VOICES (the standard OpenAI voice set) instead of leaving
+ * the select empty. */
 function VoiceField(props: { id: string; value: string; baseUrl: string; apiKey: string; onChange: (voice: string) => void }) {
   const { id, value, baseUrl, apiKey, onChange } = props
   const { options, status, refresh } = useVoiceOptions(baseUrl, apiKey)
 
   const fetchedOrFallback = status === 'error' ? OPENAI_TTS_VOICES : options
   const selectableOptions = mergeOptions(value, fetchedOrFallback)
-  const canFetch = baseUrl.trim().length > 0
+  const canFetch = baseUrl.trim().length > 0 && !isNetworkProviderBaseUrl(baseUrl)
   const statusText =
     status === 'loading'
       ? t('common.loading')
@@ -225,984 +254,1022 @@ function VoiceField(props: { id: string; value: string; baseUrl: string; apiKey:
 }
 
 // ---------------------------------------------------------------------------
-// LLM connections
+// AI接続 tab: flat provider/preset card grids (llm-settings-common-v1.md
+// §3.1). Append-only — lib/llmConfig.ts intentionally has no
+// removeProvider/removePreset (see its header comment: "entries can't be
+// deleted so other apps' configuration is never lost"), so unlike
+// tc-translate's reference UI these cards have no delete affordance, only
+// in-place edit. Edits commit per-field on blur (label/baseUrl/apiKey,
+// temperature, reasoningEffort) or immediately on select (provider, model),
+// matching §3.1's "blur でコミット、モデルselectの選択=コミットで行クローズ".
 
-interface LlmSectionProps {
+interface ConnectionTabProps {
   config: SharedLlmConfigV1
   onChange: (config: SharedLlmConfigV1) => void
 }
 
-function LlmSection({ config, onChange }: LlmSectionProps) {
-  const [label, setLabel] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  // '' = the form below adds a new provider; otherwise it edits this id in
-  // place. In-place means the id never changes, so preset.providerId
-  // references (this app's and every other tc-* app's) keep resolving.
+function ConnectionTab({ config, onChange }: ConnectionTabProps) {
   const [editingProviderId, setEditingProviderId] = useState('')
+  const [addingProvider, setAddingProvider] = useState(false)
+  const [npLabel, setNpLabel] = useState('')
+  const [npBaseUrl, setNpBaseUrl] = useState('')
+  const [npApiKey, setNpApiKey] = useState('')
 
-  const [presetLabel, setPresetLabel] = useState('')
-  const [presetProviderId, setPresetProviderId] = useState('')
-  const [presetModel, setPresetModel] = useState('')
-  const [presetTemperature, setPresetTemperature] = useState('')
-  const [presetReasoningEffort, setPresetReasoningEffort] = useState(DEFAULT_REASONING_EFFORT)
-  // Same in-place contract as editingProviderId: defaultPresetId,
-  // visionPresetId, generate-role prefs and tc-town's Character.llmProfileId
-  // all reference presets by id, so editing never reissues one.
   const [editingPresetId, setEditingPresetId] = useState('')
+  const [epModel, setEpModel] = useState('')
 
-  const presetProvider = config.providers.find((p) => p.id === presetProviderId)
+  const [addingPreset, setAddingPreset] = useState(false)
+  const [apLabel, setApLabel] = useState('')
+  const [apProviderId, setApProviderId] = useState('')
+  const [apModel, setApModel] = useState('')
 
-  function quickFill(kind: 'ollama' | 'lmstudio') {
-    if (kind === 'ollama') {
-      setBaseUrl(OLLAMA_BASE_URL)
-      setLabel(t('settings.llm.presetFillOllama'))
-    } else {
-      setBaseUrl(LM_STUDIO_BASE_URL)
-      setLabel(t('settings.llm.presetFillLmStudio'))
-    }
-  }
+  const activeRowRef = useRef<HTMLDivElement | null>(null)
 
-  function resetProviderForm() {
-    setLabel('')
-    setBaseUrl('')
-    setApiKey('')
+  function closeAllInlineRows(): void {
     setEditingProviderId('')
+    setAddingProvider(false)
+    setEditingPresetId('')
+    setAddingPreset(false)
   }
 
-  function startEditProvider(provider: LlmProviderV1) {
-    setLabel(provider.label)
-    setBaseUrl(provider.baseUrl)
-    setApiKey(provider.apiKey)
+  useEffect(() => {
+    if (editingProviderId && !config.providers.some((p) => p.id === editingProviderId)) setEditingProviderId('')
+    if (editingPresetId && !config.presets.some((p) => p.id === editingPresetId)) setEditingPresetId('')
+  }, [config.providers, config.presets])
+
+  const mouseDownInside = useRef(false)
+  useEffect(() => {
+    if (!editingProviderId && !addingProvider && !editingPresetId && !addingPreset) return undefined
+
+    function handleDown(event: MouseEvent): void {
+      mouseDownInside.current = Boolean(activeRowRef.current && activeRowRef.current.contains(event.target as Node))
+    }
+    function handleClick(event: MouseEvent): void {
+      if (activeRowRef.current && activeRowRef.current.contains(event.target as Node)) return
+      if (mouseDownInside.current) return
+      closeAllInlineRows()
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === 'Escape') closeAllInlineRows()
+    }
+
+    document.addEventListener('mousedown', handleDown)
+    document.addEventListener('click', handleClick)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleDown)
+      document.removeEventListener('click', handleClick)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingProviderId, addingProvider, editingPresetId, addingPreset])
+
+  // --- 接続先 (provider) handlers ------------------------------------------
+
+  function handleOpenEditProvider(provider: LlmProviderV1): void {
+    closeAllInlineRows()
     setEditingProviderId(provider.id)
   }
 
-  function handleSubmitProvider(event: JSX.TargetedEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!baseUrl.trim()) return
+  function commitProviderField(provider: LlmProviderV1, field: 'label' | 'baseUrl' | 'apiKey', value: string): void {
+    if (field === 'baseUrl' && !value.trim()) return
+    const normalized = field === 'baseUrl' ? normalizeBaseUrl(value) : value
+    if (normalized === provider[field]) return
     const next = cloneConfig(config)
-    const editing = editingProviderId ? next.providers.find((p) => p.id === editingProviderId) : undefined
-    if (editing) {
-      // In-place edit: replace the entry's fields, keep its id. Bypasses
-      // ensureProvider on purpose — its (baseUrl, apiKey) dedupe would
-      // silently return another entry instead of applying the user's edit.
-      const normalized = normalizeBaseUrl(baseUrl)
-      next.providers = next.providers.map((p) =>
-        p.id === editingProviderId ? { ...p, label: label.trim() || normalized, baseUrl: normalized, apiKey } : p,
-      )
-    } else {
-      ensureProvider(next, { label: label.trim() || undefined, baseUrl: baseUrl.trim(), apiKey })
-    }
+    next.providers = next.providers.map((p) => (p.id === provider.id ? { ...p, [field]: normalized } : p))
     saveLlmConfig(next)
     onChange(next)
-    resetProviderForm()
   }
 
-  function resetPresetForm() {
-    setPresetLabel('')
-    setPresetModel('')
-    setPresetTemperature('')
-    setPresetReasoningEffort(DEFAULT_REASONING_EFFORT)
+  function handleOpenAddProvider(): void {
+    closeAllInlineRows()
+    setAddingProvider(true)
+    setNpLabel('')
+    setNpBaseUrl('')
+    setNpApiKey('')
+  }
+
+  function quickFill(kind: 'ollama' | 'lmstudio'): void {
+    if (kind === 'ollama') {
+      setNpBaseUrl(OLLAMA_BASE_URL)
+      setNpLabel(t('settings.llm.presetFillOllama'))
+    } else {
+      setNpBaseUrl(LM_STUDIO_BASE_URL)
+      setNpLabel(t('settings.llm.presetFillLmStudio'))
+    }
+  }
+
+  function handleSaveNewProvider(): void {
+    const baseUrl = npBaseUrl.trim().replace(/\/+$/, '')
+    if (!baseUrl) return
+    const next = cloneConfig(config)
+    ensureProvider(next, { label: npLabel.trim() || undefined, baseUrl, apiKey: npApiKey })
+    saveLlmConfig(next)
+    onChange(next)
+    setAddingProvider(false)
+  }
+
+  // --- モデル (preset) handlers ----------------------------------------------
+
+  function handleOpenEditPreset(preset: ModelPresetV1): void {
+    closeAllInlineRows()
+    setEditingPresetId(preset.id)
+    setEpModel(preset.model)
+  }
+
+  function updatePreset(id: string, mutate: (preset: ModelPresetV1) => ModelPresetV1): void {
+    const next = cloneConfig(config)
+    next.presets = next.presets.map((p) => (p.id === id ? mutate(p) : p))
+    saveLlmConfig(next)
+    onChange(next)
+  }
+
+  function handleEpLabelBlur(preset: ModelPresetV1, value: string): void {
+    const label = value.trim() || preset.model
+    if (label === preset.label) return
+    updatePreset(preset.id, (p) => ({ ...p, label }))
+  }
+
+  // Switching providers commits immediately but leaves the stored model
+  // untouched until a new one is picked (a model id from the old provider is
+  // meaningless in the new provider's list) — only the local draft resets.
+  function handleEpProviderChange(preset: ModelPresetV1, providerId: string): void {
+    setEpModel('')
+    updatePreset(preset.id, (p) => ({ ...p, providerId }))
+  }
+
+  function commitEpModel(preset: ModelPresetV1, model: string): void {
+    const trimmed = model.trim()
+    if (!trimmed) return
+    updatePreset(preset.id, (p) => ({ ...p, model: trimmed }))
     setEditingPresetId('')
   }
 
-  function startEditPreset(preset: ModelPresetV1) {
-    setPresetLabel(preset.label)
-    setPresetProviderId(preset.providerId)
-    setPresetModel(preset.model)
-    setPresetTemperature(preset.temperature !== undefined ? String(preset.temperature) : '')
-    setPresetReasoningEffort(preset.reasoningEffort ?? '')
-    setEditingPresetId(preset.id)
-  }
-
-  function handleSubmitPreset(event: JSX.TargetedEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!presetProviderId || !presetModel.trim()) return
-    const next = cloneConfig(config)
-    const temperature = presetTemperature.trim() ? Number(presetTemperature.trim()) : undefined
-    const fields = {
-      label: presetLabel.trim() || presetModel.trim(),
-      providerId: presetProviderId,
-      model: presetModel.trim(),
-      temperature: temperature !== undefined && Number.isFinite(temperature) ? temperature : undefined,
-      reasoningEffort: presetReasoningEffort.trim() || undefined,
-    }
-    if (editingPresetId && next.presets.some((p) => p.id === editingPresetId)) {
-      // In-place edit (id preserved); optional fields are dropped when
-      // cleared, matching what ensurePreset would have stored for a new one.
-      next.presets = next.presets.map((p) => {
-        if (p.id !== editingPresetId) return p
-        const updated: ModelPresetV1 = { id: p.id, label: fields.label, providerId: fields.providerId, model: fields.model }
-        if (fields.temperature !== undefined) updated.temperature = fields.temperature
-        if (fields.reasoningEffort !== undefined) updated.reasoningEffort = fields.reasoningEffort
+  function handleEpTemperatureBlur(preset: ModelPresetV1, value: string): void {
+    const trimmed = value.trim()
+    updatePreset(preset.id, (p) => {
+      const updated = { ...p }
+      if (!trimmed) {
+        delete updated.temperature
         return updated
-      })
-    } else {
-      ensurePreset(next, { ...fields, label: presetLabel.trim() || undefined })
-    }
-    saveLlmConfig(next)
-    onChange(next)
-    resetPresetForm()
-  }
-
-  function handleSetDefault(id: string) {
-    const next = cloneConfig(config)
-    next.defaultPresetId = id
-    saveLlmConfig(next)
-    onChange(next)
-  }
-
-  return (
-    <div class="set-panel">
-      <div class="set-panel__title">{t('settings.llm.title')}</div>
-      <p class="set-panel__hint">{t('settings.llm.appendOnlyNote')}</p>
-
-      <div class="set-section">
-        <div class="set-section__title">{t('settings.llm.providersTitle')}</div>
-        {config.providers.length === 0 ? (
-          <div class="set-empty">{t('settings.llm.noProviders')}</div>
-        ) : (
-          <div class="set-list">
-            {config.providers.map((provider) => (
-              <div class="set-item" key={provider.id}>
-                <div class="set-item__main">
-                  <div class="set-item__label">{provider.label}</div>
-                  <div class="set-item__detail">{provider.baseUrl}</div>
-                </div>
-                {editingProviderId === provider.id ? (
-                  <span class="set-badge">{t('settings.llm.editing')}</span>
-                ) : (
-                  <button type="button" class="set-btn" onClick={() => startEditProvider(provider)}>
-                    {t('settings.llm.edit')}
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmitProvider}>
-          <div class="set-quickfill">
-            <button type="button" class="set-btn" onClick={() => quickFill('ollama')}>
-              {t('settings.llm.presetFillOllama')}
-            </button>
-            <button type="button" class="set-btn" onClick={() => quickFill('lmstudio')}>
-              {t('settings.llm.presetFillLmStudio')}
-            </button>
-          </div>
-          <div class="set-grid">
-            <div class="set-field">
-              <label for="set-provider-label">{t('settings.llm.providerLabel')}</label>
-              <input id="set-provider-label" type="text" value={label} onInput={(e) => setLabel(e.currentTarget.value)} />
-            </div>
-            <div class="set-field">
-              <label for="set-provider-baseurl">{t('settings.llm.baseUrl')}</label>
-              <input
-                id="set-provider-baseurl"
-                type="text"
-                value={baseUrl}
-                onInput={(e) => setBaseUrl(e.currentTarget.value)}
-              />
-            </div>
-            <div class="set-field">
-              <label for="set-provider-apikey">{t('settings.llm.apiKey')}</label>
-              <input
-                id="set-provider-apikey"
-                type="password"
-                value={apiKey}
-                onInput={(e) => setApiKey(e.currentTarget.value)}
-              />
-            </div>
-          </div>
-          <button type="submit" class="set-btn set-btn--primary" disabled={!baseUrl.trim()}>
-            {editingProviderId ? t('settings.llm.saveEdit') : t('settings.llm.addProvider')}
-          </button>
-          {editingProviderId && (
-            <button type="button" class="set-btn" onClick={resetProviderForm}>
-              {t('common.cancel')}
-            </button>
-          )}
-        </form>
-      </div>
-
-      <div class="set-section">
-        <div class="set-section__title">{t('settings.llm.presetsTitle')}</div>
-        {config.presets.length === 0 ? (
-          <div class="set-empty">{t('settings.llm.noPresets')}</div>
-        ) : (
-          <div class="set-list">
-            {config.presets.map((preset) => (
-              <div class="set-item" key={preset.id}>
-                <div class="set-item__main">
-                  <div class="set-item__label">{preset.label}</div>
-                  <div class="set-item__detail">{preset.model}</div>
-                </div>
-                {config.defaultPresetId === preset.id ? (
-                  <span class="set-badge">{t('settings.llm.isDefault')}</span>
-                ) : (
-                  <button type="button" class="set-btn" onClick={() => handleSetDefault(preset.id)}>
-                    {t('settings.llm.setDefault')}
-                  </button>
-                )}
-                {editingPresetId === preset.id ? (
-                  <span class="set-badge">{t('settings.llm.editing')}</span>
-                ) : (
-                  <button type="button" class="set-btn" onClick={() => startEditPreset(preset)}>
-                    {t('settings.llm.edit')}
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmitPreset}>
-          <div class="set-grid">
-            <div class="set-field">
-              <label for="set-preset-label">{t('settings.llm.presetLabel')}</label>
-              <input
-                id="set-preset-label"
-                type="text"
-                value={presetLabel}
-                onInput={(e) => setPresetLabel(e.currentTarget.value)}
-              />
-            </div>
-            <div class="set-field">
-              <label for="set-preset-provider">{t('settings.llm.provider')}</label>
-              <select
-                id="set-preset-provider"
-                value={presetProviderId}
-                onChange={(e) => setPresetProviderId(e.currentTarget.value)}
-              >
-                <option value="">—</option>
-                {config.providers.map((provider) => (
-                  <option value={provider.id} key={provider.id}>
-                    {provider.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div class="set-field">
-              <label for="set-preset-model">{t('settings.llm.model')}</label>
-              <ModelField
-                id="set-preset-model"
-                value={presetModel}
-                baseUrl={presetProvider?.baseUrl ?? ''}
-                apiKey={presetProvider?.apiKey ?? ''}
-                onChange={setPresetModel}
-              />
-            </div>
-            <div class="set-field">
-              <label for="set-preset-temp">{t('settings.llm.temperature')}</label>
-              <input
-                id="set-preset-temp"
-                type="text"
-                inputMode="decimal"
-                value={presetTemperature}
-                onInput={(e) => setPresetTemperature(e.currentTarget.value)}
-              />
-            </div>
-            <div class="set-field">
-              <label for="set-preset-effort">{t('settings.llm.reasoningEffort')}</label>
-              <select
-                id="set-preset-effort"
-                value={presetReasoningEffort}
-                onChange={(e) => setPresetReasoningEffort(e.currentTarget.value)}
-              >
-                <option value="">{t('settings.llm.reasoningEffortNotSent')}</option>
-                {/* An edited preset may carry a value outside the standard
-                    set (hand-typed before this became a <select>) — keep it
-                    selectable instead of silently snapping to the first
-                    option, same philosophy as mergeOptions above. */}
-                {(REASONING_EFFORT_OPTIONS as readonly string[])
-                  .concat(
-                    presetReasoningEffort && !(REASONING_EFFORT_OPTIONS as readonly string[]).includes(presetReasoningEffort)
-                      ? [presetReasoningEffort]
-                      : [],
-                  )
-                  .map((effort) => (
-                    <option value={effort} key={effort}>
-                      {effort}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          </div>
-          <button
-            type="submit"
-            class="set-btn set-btn--primary"
-            disabled={config.providers.length === 0 || !presetModel.trim() || !presetProviderId}
-          >
-            {editingPresetId ? t('settings.llm.saveEdit') : t('settings.llm.addPreset')}
-          </button>
-          {editingPresetId && (
-            <button type="button" class="set-btn" onClick={resetPresetForm}>
-              {t('common.cancel')}
-            </button>
-          )}
-        </form>
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// TTS
-
-interface TtsSectionProps {
-  config: SharedLlmConfigV1
-  onChange: (config: SharedLlmConfigV1) => void
-}
-
-function TtsSection({ config, onChange }: TtsSectionProps) {
-  const [providerId, setProviderId] = useState(config.tts?.providerId ?? '')
-  const [model, setModel] = useState(config.tts?.model ?? '')
-  const [voice, setVoice] = useState(config.tts?.voice ?? '')
-  const [speed, setSpeed] = useState(config.tts?.speed !== undefined ? String(config.tts.speed) : '')
-  const [saved, setSaved] = useState(false)
-  const [testState, setTestState] = useState<'idle' | 'loading' | 'error'>('idle')
-  const [testError, setTestError] = useState('')
-
-  // providerId explicit selection, or else the default LLM preset's provider
-  // — same fallback resolveVoice() uses when actually resolving TTS at
-  // runtime (lib/llmConfig.ts). Recomputed every render so the model/voice
-  // pickers below always fetch against the currently selected provider.
-  const ttsProvider = providerId
-    ? config.providers.find((p) => p.id === providerId)
-    : (() => {
-        const resolved = resolvePreset(config)
-        return resolved ? config.providers.find((p) => p.id === resolved.providerId) : undefined
-      })()
-
-  function handleSave(event: JSX.TargetedEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const next = cloneConfig(config)
-    const speedNum = speed.trim() ? Number(speed.trim()) : undefined
-    const voiceConfig: VoiceConfigV1 = { model: model.trim() }
-    if (providerId) voiceConfig.providerId = providerId
-    if (voice.trim()) voiceConfig.voice = voice.trim()
-    if (speedNum !== undefined && Number.isFinite(speedNum)) voiceConfig.speed = speedNum
-    next.tts = voiceConfig
-    saveLlmConfig(next)
-    onChange(next)
-    setSaved(true)
-  }
-
-  async function handleTest() {
-    setTestState('loading')
-    setTestError('')
-    try {
-      if (!ttsProvider || !model.trim()) {
-        throw new Error(t('errors.llmNotConfigured'))
       }
-      const blob = await synthesizeSpeech({
-        connection: { baseUrl: ttsProvider.baseUrl, apiKey: ttsProvider.apiKey },
-        model: model.trim(),
-        voice: voice.trim() || 'alloy',
-        text: t('settings.tts.testText'),
-      })
-      const url = URL.createObjectURL(blob)
-      const audio = new Audio(url)
-      audio.addEventListener('ended', () => URL.revokeObjectURL(url))
-      await audio.play().catch(() => undefined)
-      setTestState('idle')
-    } catch (err) {
-      setTestState('error')
-      setTestError(err instanceof Error ? err.message : String(err))
-    }
+      const parsed = Number(trimmed)
+      if (Number.isFinite(parsed)) updated.temperature = parsed
+      return updated
+    })
   }
 
-  return (
-    <div class="set-panel">
-      <div class="set-panel__title">{t('settings.tts.title')}</div>
-      <form onSubmit={handleSave}>
-        <div class="set-grid">
-          <div class="set-field">
-            <label for="set-tts-provider">{t('settings.tts.provider')}</label>
-            <select id="set-tts-provider" value={providerId} onChange={(e) => setProviderId(e.currentTarget.value)}>
-              <option value="">{t('settings.tts.providerDefault')}</option>
-              {config.providers.map((provider) => (
-                <option value={provider.id} key={provider.id}>
-                  {provider.label}
+  function handleEpReasoningChange(preset: ModelPresetV1, value: string): void {
+    updatePreset(preset.id, (p) => {
+      const updated = { ...p }
+      if (!value) delete updated.reasoningEffort
+      else updated.reasoningEffort = value
+      return updated
+    })
+  }
+
+  function handleOpenAddPreset(): void {
+    closeAllInlineRows()
+    setAddingPreset(true)
+    setApLabel('')
+    setApProviderId('')
+    setApModel('')
+  }
+
+  function handleApProviderChange(providerId: string): void {
+    setApProviderId(providerId)
+    setApModel('')
+  }
+
+  function handleSaveAddPreset(modelOverride?: string): void {
+    const model = (modelOverride ?? apModel).trim()
+    if (!apProviderId || !model) return
+    const next = cloneConfig(config)
+    ensurePreset(next, {
+      label: apLabel.trim() || undefined,
+      providerId: apProviderId,
+      model,
+      reasoningEffort: DEFAULT_REASONING_EFFORT,
+    })
+    saveLlmConfig(next)
+    onChange(next)
+    setAddingPreset(false)
+  }
+
+  // --- badges ----------------------------------------------------------------
+
+  function getPresetBadges(preset: ModelPresetV1): string[] {
+    const badges: string[] = []
+    if (config.defaultPresetId === preset.id) badges.push(t('settings.llm.badgeDefault'))
+    if (loadVisionPresetId() === preset.id) badges.push(t('settings.llm.badgeVision'))
+    const rolePrefs = loadGenerateRolePrefs()
+    if (rolePrefs.orchestratorPresetId === preset.id) badges.push(t('settings.tasks.badgePlan'))
+    if (rolePrefs.workerPresetId === preset.id) badges.push(t('settings.tasks.badgeSlides'))
+    if (config.tts && config.tts.providerId === preset.providerId && config.tts.model === preset.model) {
+      badges.push(t('settings.llm.badgeTts'))
+    }
+    const provider = config.providers.find((p) => p.id === preset.providerId)
+    if (provider && isNetworkProviderBaseUrl(provider.baseUrl)) badges.push(t('settings.llm.badgeNetwork'))
+    if (loadNetworkProviderPresetIds().includes(preset.id)) badges.push(t('settings.llm.badgeShared'))
+    return badges
+  }
+
+  // --- provider row rendering -------------------------------------------------
+
+  function renderProviderRow(provider: LlmProviderV1) {
+    const isEditing = editingProviderId === provider.id
+    const isNetwork = isNetworkProviderBaseUrl(provider.baseUrl)
+    const hostLabel = hostLabelFor(provider.baseUrl)
+    const secondLine = isNetwork ? t('settings.llm.connectionNetworkNote') : hostLabel
+
+    if (isEditing) {
+      return (
+        <div class="model-row model-row-editing" key={provider.id} ref={activeRowRef}>
+          <div class="model-row-edit-fields">
+            <input
+              defaultValue={provider.label}
+              onBlur={(e) => commitProviderField(provider, 'label', e.currentTarget.value)}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              placeholder={t('settings.llm.providerLabel')}
+              autoComplete="off"
+            />
+            <input
+              defaultValue={provider.baseUrl}
+              title={provider.baseUrl}
+              onBlur={(e) => commitProviderField(provider, 'baseUrl', e.currentTarget.value)}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              placeholder="https://..."
+              autoComplete="off"
+            />
+            <input
+              type="password"
+              defaultValue={provider.apiKey || ''}
+              onBlur={(e) => commitProviderField(provider, 'apiKey', e.currentTarget.value)}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              placeholder={t('settings.llm.apiKey')}
+              autoComplete="off"
+            />
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div class={`model-row${isNetwork ? ' model-row-network' : ''}`} key={provider.id}>
+        <button type="button" class="model-row-main" onClick={() => handleOpenEditProvider(provider)}>
+          <span class="model-row-label">{provider.label || hostLabel}</span>
+          <span class="model-row-model">{secondLine}</span>
+        </button>
+      </div>
+    )
+  }
+
+  function renderAddProviderTile() {
+    if (addingProvider) {
+      return (
+        <div class="model-row model-row-editing model-row-add" ref={activeRowRef}>
+          <div class="model-row-edit-fields">
+            <div class="set-quickfill">
+              <button type="button" class="connection-form-btn" onClick={() => quickFill('ollama')}>
+                {t('settings.llm.presetFillOllama')}
+              </button>
+              <button type="button" class="connection-form-btn" onClick={() => quickFill('lmstudio')}>
+                {t('settings.llm.presetFillLmStudio')}
+              </button>
+            </div>
+            <input value={npLabel} onInput={(e) => setNpLabel(e.currentTarget.value)} placeholder={t('settings.llm.providerLabel')} autoComplete="off" />
+            <input value={npBaseUrl} onInput={(e) => setNpBaseUrl(e.currentTarget.value)} placeholder="https://..." autoComplete="off" />
+            <input
+              type="password"
+              value={npApiKey}
+              onInput={(e) => setNpApiKey(e.currentTarget.value)}
+              placeholder={t('settings.llm.apiKey')}
+              autoComplete="off"
+            />
+          </div>
+          <div class="model-row-add-actions">
+            <button type="button" class="connection-form-btn connection-form-btn-primary" onClick={handleSaveNewProvider} disabled={!npBaseUrl.trim()}>
+              <Plus size={13} />
+              {t('settings.llm.addProvider')}
+            </button>
+            <button type="button" class="connection-form-btn" onClick={() => setAddingProvider(false)}>
+              {t('common.cancel')}
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return (
+      <button type="button" class="grid-add-tile" onClick={handleOpenAddProvider}>
+        <Plus size={16} />
+        <span>{t('settings.llm.addProvider')}</span>
+      </button>
+    )
+  }
+
+  // --- preset row rendering ---------------------------------------------------
+
+  function renderModelRow(preset: ModelPresetV1) {
+    const isEditing = editingPresetId === preset.id
+
+    if (isEditing) {
+      const provider = config.providers.find((p) => p.id === preset.providerId)
+      const isNetworkPreset = provider ? isNetworkProviderBaseUrl(provider.baseUrl) : false
+      return (
+        <div class="model-row model-row-editing" key={preset.id} ref={activeRowRef}>
+          <div class="model-row-edit-fields">
+            <input
+              defaultValue={preset.label}
+              onBlur={(e) => handleEpLabelBlur(preset, e.currentTarget.value)}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              placeholder={t('settings.llm.presetLabel')}
+              autoComplete="off"
+            />
+            <select value={preset.providerId} onChange={(e) => handleEpProviderChange(preset, e.currentTarget.value)}>
+              {config.providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label || hostLabelFor(p.baseUrl)}
+                </option>
+              ))}
+            </select>
+            <div class="connection-form-model-field">
+              {isNetworkPreset ? (
+                <input value={epModel} disabled title={t('settings.llm.connectionNetworkNote')} />
+              ) : (
+                <ModelField
+                  id={`set-preset-model-${preset.id}`}
+                  value={epModel}
+                  baseUrl={provider?.baseUrl ?? ''}
+                  apiKey={provider?.apiKey ?? ''}
+                  onChange={(value) => {
+                    setEpModel(value)
+                    commitEpModel(preset, value)
+                  }}
+                />
+              )}
+            </div>
+            <input
+              type="number"
+              min="0"
+              max="2"
+              step="0.1"
+              defaultValue={preset.temperature ?? ''}
+              onBlur={(e) => handleEpTemperatureBlur(preset, e.currentTarget.value)}
+              placeholder={t('settings.llm.temperature')}
+              aria-label={t('settings.llm.temperature')}
+              title={t('settings.llm.temperature')}
+            />
+            <select
+              value={preset.reasoningEffort ?? ''}
+              onChange={(e) => handleEpReasoningChange(preset, e.currentTarget.value)}
+              aria-label={t('settings.llm.reasoningEffort')}
+              title={t('settings.llm.reasoningEffort')}
+            >
+              <option value="">{t('settings.llm.reasoningEffortNotSent')}</option>
+              {REASONING_EFFORT_OPTIONS.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
                 </option>
               ))}
             </select>
           </div>
-          <div class="set-field">
-            <label for="set-tts-model">{t('settings.tts.model')}</label>
-            <ModelField
-              id="set-tts-model"
-              value={model}
-              baseUrl={ttsProvider?.baseUrl ?? ''}
-              apiKey={ttsProvider?.apiKey ?? ''}
-              onChange={setModel}
-            />
+        </div>
+      )
+    }
+
+    const badges = getPresetBadges(preset)
+    const provider = config.providers.find((p) => p.id === preset.providerId)
+    const isNetworkPreset = provider ? isNetworkProviderBaseUrl(provider.baseUrl) : false
+    return (
+      <div class={`model-row${isNetworkPreset ? ' model-row-network' : ''}`} key={preset.id}>
+        <button type="button" class="model-row-main" onClick={() => handleOpenEditPreset(preset)}>
+          <span class="model-row-label">{preset.label}</span>
+          <span class="model-row-model">{preset.model}</span>
+          <span class="model-row-provider">{providerLabelFor(config, preset.providerId)}</span>
+        </button>
+        {badges.length > 0 ? (
+          <span class="model-row-badges">
+            {badges.map((badge) => (
+              <span key={badge} class="task-badge">
+                {badge}
+              </span>
+            ))}
+          </span>
+        ) : null}
+      </div>
+    )
+  }
+
+  function renderAddPresetTile() {
+    if (config.providers.length === 0) {
+      return (
+        <button type="button" class="grid-add-tile" disabled title={t('settings.llm.addModelNeedConnection')}>
+          <Plus size={16} />
+          <span>{t('settings.llm.addPreset')}</span>
+        </button>
+      )
+    }
+    if (addingPreset) {
+      const apProvider = config.providers.find((p) => p.id === apProviderId)
+      const isNetworkProvider = apProvider ? isNetworkProviderBaseUrl(apProvider.baseUrl) : false
+      return (
+        <div class="model-row model-row-editing model-row-add" ref={activeRowRef}>
+          <div class="model-row-edit-fields">
+            <input value={apLabel} onInput={(e) => setApLabel(e.currentTarget.value)} placeholder={t('settings.llm.presetLabel')} autoComplete="off" />
+            <select value={apProviderId} onChange={(e) => handleApProviderChange(e.currentTarget.value)}>
+              <option value="" disabled>
+                {t('settings.llm.selectConnectionPlaceholder')}
+              </option>
+              {config.providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label || hostLabelFor(p.baseUrl)}
+                </option>
+              ))}
+            </select>
+            <div class="connection-form-model-field">
+              {!apProviderId ? (
+                <select value="" disabled>
+                  <option value="">{t('settings.llm.modelSelectConnectionFirst')}</option>
+                </select>
+              ) : isNetworkProvider ? (
+                <input
+                  value={apModel}
+                  onInput={(e) => setApModel(e.currentTarget.value)}
+                  onBlur={() => handleSaveAddPreset()}
+                  placeholder={t('settings.llm.model')}
+                />
+              ) : (
+                <ModelField
+                  id="set-add-preset-model"
+                  value={apModel}
+                  baseUrl={apProvider?.baseUrl ?? ''}
+                  apiKey={apProvider?.apiKey ?? ''}
+                  onChange={(value) => {
+                    setApModel(value)
+                    handleSaveAddPreset(value)
+                  }}
+                />
+              )}
+            </div>
           </div>
-          <div class="set-field">
-            <label for="set-tts-voice">{t('settings.tts.voice')}</label>
-            <VoiceField
-              id="set-tts-voice"
-              value={voice}
-              baseUrl={ttsProvider?.baseUrl ?? ''}
-              apiKey={ttsProvider?.apiKey ?? ''}
-              onChange={setVoice}
-            />
-          </div>
-          <div class="set-field">
-            <label for="set-tts-speed">{t('settings.tts.speed')}</label>
-            <input
-              id="set-tts-speed"
-              type="text"
-              inputMode="decimal"
-              value={speed}
-              onInput={(e) => setSpeed(e.currentTarget.value)}
-            />
+          <div class="model-row-add-actions">
+            <button type="button" class="connection-form-btn" onClick={() => setAddingPreset(false)}>
+              {t('common.cancel')}
+            </button>
           </div>
         </div>
-        <div class="set-quickfill">
-          <button type="submit" class="set-btn set-btn--primary" onClick={() => setSaved(false)}>
-            {t('settings.tts.save')}
-          </button>
-          <button type="button" class="set-btn" onClick={handleTest} disabled={testState === 'loading' || !model.trim()}>
-            {testState === 'loading' ? t('settings.tts.testing') : t('settings.tts.test')}
-          </button>
-        </div>
-        {saved && <div class="set-status-msg set-status-msg--ok">{t('settings.tts.saved')}</div>}
-        {testState === 'error' && (
-          <div class="set-status-msg set-status-msg--error">{t('settings.tts.testError', { message: testError })}</div>
-        )}
-      </form>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Per-language TTS overrides (lib/ttsLangRules.ts + lib/browserTts.ts). Local
-// to tc-presenter only — layered on top of the shared `tts` config as
-// per-language exceptions (e.g. route Japanese through the browser's
-// built-in speechSynthesis while everything else keeps the shared
-// OpenAI-compatible endpoint). Rules are stored locally, never written to
-// the shared llmConfig record.
-
-interface TtsLangSectionProps {
-  config: SharedLlmConfigV1
-}
-
-function summarizeTtsLangRule(rule: TtsEngineRule): string {
-  if (rule.engine === 'openai') {
-    return rule.voice ? `${rule.model} · ${rule.voice}` : rule.model
-  }
-  return rule.voiceURI || t('settings.ttsLang.browserVoiceDefault')
-}
-
-function TtsLangSection({ config }: TtsLangSectionProps) {
-  const [rules, setRules] = useState<TtsLangRulesV1>(loadTtsLangRules)
-  const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([])
-  const browserSupported = isBrowserTtsSupported()
-
-  const [lang, setLang] = useState('')
-  const [engine, setEngine] = useState<'openai' | 'browser'>('openai')
-  const [providerId, setProviderId] = useState('')
-  const [model, setModel] = useState('')
-  const [voice, setVoice] = useState('')
-  const [speed, setSpeed] = useState('')
-  const [voiceURI, setVoiceURI] = useState('')
-  const [rate, setRate] = useState('')
-
-  const [testingLang, setTestingLang] = useState<string | null>(null)
-  const [testError, setTestError] = useState<{ lang: string; message: string } | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    listBrowserVoices().then((list) => {
-      if (!cancelled) setBrowserVoices(list)
-    })
-    return () => {
-      cancelled = true
+      )
     }
-  }, [])
-
-  // providerId explicit selection, or else the default LLM preset's provider
-  // — mirrors TtsSection's ttsProvider fallback above.
-  const selectedProvider = providerId
-    ? config.providers.find((p) => p.id === providerId)
-    : (() => {
-        const resolved = resolvePreset(config)
-        return resolved ? config.providers.find((p) => p.id === resolved.providerId) : undefined
-      })()
-
-  const normalizedLang = normalizeLang(lang.trim())
-  const sortedBrowserVoices = [...browserVoices].sort((a, b) => {
-    const aMatch = normalizedLang && a.lang.toLowerCase().startsWith(normalizedLang) ? 0 : 1
-    const bMatch = normalizedLang && b.lang.toLowerCase().startsWith(normalizedLang) ? 0 : 1
-    if (aMatch !== bMatch) return aMatch - bMatch
-    return a.name.localeCompare(b.name)
-  })
-
-  function resetForm() {
-    setLang('')
-    setModel('')
-    setVoice('')
-    setSpeed('')
-    setVoiceURI('')
-    setRate('')
+    return (
+      <button type="button" class="grid-add-tile" onClick={handleOpenAddPreset}>
+        <Plus size={16} />
+        <span>{t('settings.llm.addPreset')}</span>
+      </button>
+    )
   }
-
-  function handleAdd(event: JSX.TargetedEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const key = normalizeLang(lang.trim())
-    if (!key) return
-    let rule: TtsEngineRule
-    if (engine === 'openai') {
-      if (!model.trim()) return
-      const speedNum = speed.trim() ? Number(speed.trim()) : undefined
-      rule = {
-        engine: 'openai',
-        providerId: providerId || undefined,
-        model: model.trim(),
-        voice: voice.trim() || undefined,
-        speed: speedNum !== undefined && Number.isFinite(speedNum) ? speedNum : undefined,
-      }
-    } else {
-      if (!browserSupported) return
-      const rateNum = rate.trim() ? Number(rate.trim()) : undefined
-      rule = {
-        engine: 'browser',
-        voiceURI: voiceURI || undefined,
-        rate: rateNum !== undefined && Number.isFinite(rateNum) ? rateNum : undefined,
-      }
-    }
-    const next: TtsLangRulesV1 = { v: 1, rules: { ...rules.rules, [key]: rule } }
-    saveTtsLangRules(next)
-    setRules(next)
-    resetForm()
-  }
-
-  function handleRemove(key: string) {
-    const nextRules = { ...rules.rules }
-    delete nextRules[key]
-    const next: TtsLangRulesV1 = { v: 1, rules: nextRules }
-    saveTtsLangRules(next)
-    setRules(next)
-  }
-
-  async function handleTest(key: string, rule: TtsEngineRule) {
-    setTestingLang(key)
-    setTestError(null)
-    try {
-      if (rule.engine === 'openai') {
-        const provider = rule.providerId
-          ? config.providers.find((p) => p.id === rule.providerId)
-          : (() => {
-              const resolved = resolvePreset(config)
-              return resolved ? config.providers.find((p) => p.id === resolved.providerId) : undefined
-            })()
-        if (!provider || !rule.model.trim()) {
-          throw new Error(t('errors.llmNotConfigured'))
-        }
-        const blob = await synthesizeSpeech({
-          connection: { baseUrl: provider.baseUrl, apiKey: provider.apiKey },
-          model: rule.model,
-          voice: rule.voice || 'alloy',
-          text: t('settings.tts.testText'),
-        })
-        const url = URL.createObjectURL(blob)
-        const audio = new Audio(url)
-        audio.addEventListener('ended', () => URL.revokeObjectURL(url))
-        await audio.play().catch(() => undefined)
-        setTestingLang(null)
-      } else {
-        if (!browserSupported) {
-          throw new Error(t('settings.ttsLang.browserUnsupported'))
-        }
-        createBrowserSpeech({
-          text: t('settings.tts.testText'),
-          lang: key === '*' ? undefined : key,
-          voiceURI: rule.voiceURI,
-          rate: rule.rate,
-          onEnd: () => setTestingLang(null),
-          onError: (err) => {
-            setTestingLang(null)
-            setTestError({ lang: key, message: err instanceof Error ? err.message : String(err) })
-          },
-        }).play()
-      }
-    } catch (err) {
-      setTestingLang(null)
-      setTestError({ lang: key, message: err instanceof Error ? err.message : String(err) })
-    }
-  }
-
-  const entries = Object.entries(rules.rules)
 
   return (
-    <div class="set-panel">
-      <div class="set-panel__title">{t('settings.ttsLang.title')}</div>
-      <p class="set-panel__hint">{t('settings.ttsLang.hint')}</p>
-
-      {entries.length === 0 ? (
-        <div class="set-empty">{t('settings.ttsLang.noRules')}</div>
-      ) : (
-        <div class="set-list">
-          {entries.map(([key, rule]) => (
-            <div class="set-item" key={key}>
-              <div class="set-item__main">
-                <div class="set-item__label">{key === '*' ? t('settings.ttsLang.anyLangLabel') : key}</div>
-                <div class="set-item__detail">{summarizeTtsLangRule(rule)}</div>
-              </div>
-              <span class="set-badge">
-                {rule.engine === 'openai' ? t('settings.ttsLang.engineOpenai') : t('settings.ttsLang.engineBrowser')}
-              </span>
-              <button type="button" class="set-btn" onClick={() => handleTest(key, rule)} disabled={testingLang === key}>
-                {testingLang === key ? t('settings.tts.testing') : t('settings.tts.test')}
-              </button>
-              <button type="button" class="set-btn" onClick={() => handleRemove(key)}>
-                {t('settings.ttsLang.remove')}
-              </button>
-            </div>
-          ))}
+    <div class="settings-tab-panel">
+      <div class="server-list-header">
+        <label>{t('settings.llm.providersTitle')}</label>
+      </div>
+      <div class="settings-flat-section settings-flat-section-connection">
+        {config.providers.length === 0 && !addingProvider ? <p class="hint">{t('settings.llm.noProviders')}</p> : null}
+        <div class="model-row-list">
+          {config.providers.map((provider) => renderProviderRow(provider))}
+          {renderAddProviderTile()}
         </div>
-      )}
-      {testError && (
-        <div class="set-status-msg set-status-msg--error">{t('settings.tts.testError', { message: testError.message })}</div>
-      )}
+      </div>
 
-      <form onSubmit={handleAdd} class="set-section">
-        <div class="set-grid">
-          <div class="set-field">
-            <label for="set-ttslang-lang">{t('settings.ttsLang.lang')}</label>
-            <input
-              id="set-ttslang-lang"
-              type="text"
-              value={lang}
-              placeholder={t('settings.ttsLang.langPlaceholder')}
-              onInput={(e) => setLang(e.currentTarget.value)}
-            />
-          </div>
-          <div class="set-field">
-            <label for="set-ttslang-engine">{t('settings.ttsLang.engine')}</label>
-            <select
-              id="set-ttslang-engine"
-              value={engine}
-              onChange={(e) => setEngine(e.currentTarget.value as 'openai' | 'browser')}
-            >
-              <option value="openai">{t('settings.ttsLang.engineOpenai')}</option>
-              <option value="browser" disabled={!browserSupported}>
-                {t('settings.ttsLang.engineBrowser')}
-              </option>
-            </select>
-            {!browserSupported && <p class="set-note">{t('settings.ttsLang.browserUnsupported')}</p>}
-          </div>
-
-          {engine === 'openai' ? (
-            <>
-              <div class="set-field">
-                <label for="set-ttslang-provider">{t('settings.tts.provider')}</label>
-                <select id="set-ttslang-provider" value={providerId} onChange={(e) => setProviderId(e.currentTarget.value)}>
-                  <option value="">{t('settings.tts.providerDefault')}</option>
-                  {config.providers.map((provider) => (
-                    <option value={provider.id} key={provider.id}>
-                      {provider.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div class="set-field">
-                <label for="set-ttslang-model">{t('settings.tts.model')}</label>
-                <ModelField
-                  id="set-ttslang-model"
-                  value={model}
-                  baseUrl={selectedProvider?.baseUrl ?? ''}
-                  apiKey={selectedProvider?.apiKey ?? ''}
-                  onChange={setModel}
-                />
-              </div>
-              <div class="set-field">
-                <label for="set-ttslang-voice">{t('settings.tts.voice')}</label>
-                <VoiceField
-                  id="set-ttslang-voice"
-                  value={voice}
-                  baseUrl={selectedProvider?.baseUrl ?? ''}
-                  apiKey={selectedProvider?.apiKey ?? ''}
-                  onChange={setVoice}
-                />
-              </div>
-              <div class="set-field">
-                <label for="set-ttslang-speed">{t('settings.tts.speed')}</label>
-                <input
-                  id="set-ttslang-speed"
-                  type="text"
-                  inputMode="decimal"
-                  value={speed}
-                  onInput={(e) => setSpeed(e.currentTarget.value)}
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <div class="set-field">
-                <label for="set-ttslang-voiceuri">{t('settings.ttsLang.browserVoice')}</label>
-                <select
-                  id="set-ttslang-voiceuri"
-                  value={voiceURI}
-                  onChange={(e) => setVoiceURI(e.currentTarget.value)}
-                  disabled={!browserSupported}
-                >
-                  <option value="">{t('settings.ttsLang.browserVoiceDefault')}</option>
-                  {sortedBrowserVoices.map((v) => (
-                    <option value={v.voiceURI} key={v.voiceURI}>
-                      {v.name} ({v.lang})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div class="set-field">
-                <label for="set-ttslang-rate">{t('settings.ttsLang.rate')}</label>
-                <input
-                  id="set-ttslang-rate"
-                  type="text"
-                  inputMode="decimal"
-                  value={rate}
-                  onInput={(e) => setRate(e.currentTarget.value)}
-                  disabled={!browserSupported}
-                />
-              </div>
-            </>
-          )}
+      <div class="server-list-header">
+        <label>{t('settings.llm.presetsTitle')}</label>
+      </div>
+      <div class="settings-flat-section settings-flat-section-models">
+        {config.providers.length > 0 && config.presets.length === 0 && !addingPreset ? (
+          <p class="hint">{t('settings.llm.noPresets')}</p>
+        ) : null}
+        <div class="model-row-list">
+          {config.presets.map((preset) => renderModelRow(preset))}
+          {renderAddPresetTile()}
         </div>
-        <button
-          type="submit"
-          class="set-btn set-btn--primary"
-          disabled={!lang.trim() || (engine === 'openai' ? !model.trim() : !browserSupported)}
-        >
-          {t('settings.ttsLang.add')}
-        </button>
-      </form>
+      </div>
+      <p class="hint">{t('settings.llm.appendOnlyNote')}</p>
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// AI Network
+// AI Network tab: Room ID + two role cards (consumer / provider), per
+// llm-settings-common-v1.md §3.3. The consumer role reuses lib/aiNetwork.ts's
+// long-lived `networkClient` (unchanged). The provider role is new: this app
+// previously only re-exported `useNetworkProvider` (lib/aiNetwork.ts) without
+// wiring it up anywhere. `callLlm` enforces the named-but-unshared rejection
+// (§4.5): a model name not in the checked "share" list is refused rather than
+// silently answered. `synthesize` is only advertised when the shared TTS
+// config resolves to a real HTTP connection (never `mist-network://` —
+// §4.5's loopback guard, since answering with a network-resolved TTS would
+// just bounce the request back into the room).
 
-interface NetworkSectionProps {
+interface NetworkTabProps {
   config: SharedLlmConfigV1
   onChange: (config: SharedLlmConfigV1) => void
 }
 
-function NetworkSection({ config, onChange }: NetworkSectionProps) {
-  const [enabled, setEnabled] = useState(loadNetworkEnabled)
-  const [roomId, setRoomId] = useState(config.network.roomId)
-  useConsumerConnection(networkClient, { enabled, roomId })
-  const status = useConsumerStatus(networkClient)
-  const messages = getLocale() === 'ja' ? MESSAGES_JA : MESSAGES_EN
+function NetworkTab({ config, onChange }: NetworkTabProps) {
+  const [roomIdDraft, setRoomIdDraft] = useState(config.network.roomId)
+  useEffect(() => setRoomIdDraft(config.network.roomId), [config.network.roomId])
 
-  function handleToggle() {
-    const next = !enabled
-    setEnabled(next)
-    saveNetworkEnabled(next)
-  }
-
-  function handleSaveRoom(event: JSX.TargetedEvent<HTMLFormElement>) {
-    event.preventDefault()
+  function commitRoomId(): void {
+    const trimmed = roomIdDraft.trim()
+    if (trimmed === config.network.roomId) return
     const next = cloneConfig(config)
-    next.network = { roomId: roomId.trim() }
+    next.network = { roomId: trimmed }
     saveLlmConfig(next)
     onChange(next)
   }
 
+  const [consumerEnabled, setConsumerEnabled] = useState(loadNetworkEnabled)
+  useConsumerConnection(networkClient, { enabled: consumerEnabled, roomId: config.network.roomId })
+  const consumerStatus = useConsumerStatus(networkClient)
+  const messages = getLocale() === 'ja' ? MESSAGES_JA : MESSAGES_EN
+
+  function toggleConsumer(): void {
+    const next = !consumerEnabled
+    setConsumerEnabled(next)
+    saveNetworkEnabled(next)
+  }
+
+  const [providerEnabled, setProviderEnabled] = useState(loadNetworkProviderEnabled)
+  const [sharedPresetIds, setSharedPresetIds] = useState<string[]>(loadNetworkProviderPresetIds)
+
+  function toggleProvider(): void {
+    const next = !providerEnabled
+    setProviderEnabled(next)
+    saveNetworkProviderEnabled(next)
+  }
+
+  function toggleShare(presetId: string, checked: boolean): void {
+    const next = checked ? [...sharedPresetIds, presetId] : sharedPresetIds.filter((id) => id !== presetId)
+    setSharedPresetIds(next)
+    saveNetworkProviderPresetIds(next)
+  }
+
+  // Presets shareable to the room: must resolve to a real HTTP provider — a
+  // preset whose provider is itself the mist-network:// pseudo-provider
+  // (imported from a room) can't be re-shared (checklist #3, re-share loop).
+  const eligiblePresets = useMemo(
+    () =>
+      config.presets.filter((preset) => {
+        const provider = config.providers.find((p) => p.id === preset.providerId)
+        return provider !== undefined && !isNetworkProviderBaseUrl(provider.baseUrl)
+      }),
+    [config.presets, config.providers],
+  )
+
+  const sharedPresets = useMemo(
+    () => eligiblePresets.filter((preset) => sharedPresetIds.includes(preset.id)),
+    [eligiblePresets, sharedPresetIds],
+  )
+
+  // Provider-side chat resolver (llm-settings-common-v1.md §4.5): a request
+  // naming a model must match one of the checked/shared presets' advertised
+  // name, or is rejected outright — never silently answered by an unshared
+  // preset. No model at all falls back to this device's own default preset.
+  const callLlm: LlmCallFn = async (chatMessages, model, onDelta) => {
+    let target: ResolvedLlmTargetV1 | null
+    if (!model) {
+      target = resolvePreset(config)
+    } else {
+      const preset = sharedPresets.find((p) => advertisedModelName(p) === model)
+      if (!preset) throw new Error(t('settings.network.modelNotShared'))
+      target = resolvePreset(config, preset.id)
+    }
+    if (!target) throw new Error(t('errors.llmNotConfigured'))
+    return requestApiChatCompletionStreaming(target, chatMessages, target.model, onDelta)
+  }
+
+  const synthesize: SynthesizeFn | undefined = useMemo(() => {
+    const resolved = resolveVoice(config, 'tts')
+    if (!resolved || isNetworkProviderBaseUrl(resolved.baseUrl)) return undefined
+    return async (text, _model, voice) => {
+      const blob = await synthesizeSpeech({
+        connection: { baseUrl: resolved.baseUrl, apiKey: resolved.apiKey },
+        model: resolved.model,
+        voice: voice || resolved.voice || 'alloy',
+        text,
+      })
+      return { blob, mime: 'audio/mpeg' }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.tts, config.providers, config.defaultPresetId, config.presets])
+
+  const advertisedModels = useMemo(() => sharedPresets.map((preset) => advertisedModelName(preset)), [sharedPresets])
+
+  const providerResult = useNetworkProvider({
+    enabled: providerEnabled,
+    roomId: config.network.roomId,
+    createNode: createMistNode,
+    nodeIdStorageKey: NODE_ID_STORAGE_KEY,
+    callLlm,
+    synthesize,
+    advertisedModels,
+  })
+
   return (
-    <div class="set-panel">
-      <div class="set-panel__title">{t('settings.network.title')}</div>
-      <label class="set-toggle-row">
-        <input type="checkbox" checked={enabled} onChange={handleToggle} />
-        <span>{t('settings.network.enable')}</span>
-      </label>
+    <div class="settings-tab-panel">
+      <div class="set-field">
+        <label for="set-network-room">{t('settings.network.roomId')}</label>
+        <input
+          id="set-network-room"
+          type="text"
+          value={roomIdDraft}
+          placeholder={t('settings.network.roomIdPlaceholder')}
+          onInput={(e) => setRoomIdDraft(e.currentTarget.value)}
+          onBlur={commitRoomId}
+          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+        />
+      </div>
 
-      <form onSubmit={handleSaveRoom} class="set-section">
-        <div class="set-field">
-          <label for="set-network-room">{t('settings.network.roomId')}</label>
-          <input
-            id="set-network-room"
-            type="text"
-            value={roomId}
-            placeholder={t('settings.network.roomIdPlaceholder')}
-            onInput={(e) => setRoomId(e.currentTarget.value)}
-          />
+      <div class="settings-role-group">
+        <div class="settings-role-card">
+          <label class="settings-role-head">
+            <input type="checkbox" checked={consumerEnabled} onChange={toggleConsumer} />
+            <span class="settings-role-title">
+              <Network size={15} />
+              {t('settings.network.consumerToggle')}
+            </span>
+          </label>
+          <p class="settings-role-desc">{t('settings.network.consumerHint')}</p>
+          {consumerEnabled ? (
+            <div class="settings-role-body">
+              <ConsumerStatusIndicator status={consumerStatus} messages={messages} variant="detailed" />
+            </div>
+          ) : null}
         </div>
-        <button type="submit" class="set-btn set-btn--primary">
-          {t('settings.network.save')}
-        </button>
-      </form>
 
-      <div class="set-section">
-        <ConsumerStatusIndicator status={status} messages={messages} variant="detailed" />
+        <div class="settings-role-card">
+          <label class="settings-role-head">
+            <input type="checkbox" checked={providerEnabled} onChange={toggleProvider} />
+            <span class="settings-role-title">
+              <Server size={15} />
+              {t('settings.network.providerToggle')}
+            </span>
+          </label>
+          <p class="settings-role-desc">{t('settings.network.providerHint')}</p>
+          {providerEnabled ? (
+            <div class="settings-role-body">
+              <div class="network-share-models">
+                <label>{t('settings.network.shareModelsHeading')}</label>
+                {eligiblePresets.length === 0 ? (
+                  <p class="hint">{t('settings.network.shareModelsEmpty')}</p>
+                ) : (
+                  <div class="network-share-list">
+                    {eligiblePresets.map((preset) => (
+                      <label class="network-share-item" key={preset.id}>
+                        <input
+                          type="checkbox"
+                          checked={sharedPresetIds.includes(preset.id)}
+                          onChange={(e) => toggleShare(preset.id, e.currentTarget.checked)}
+                        />
+                        <span class="network-share-item-label">{preset.label || preset.model}</span>
+                        <span class="network-share-item-model">
+                          {preset.model} · {providerLabelFor(config, preset.providerId)}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <ProviderStatusPanel
+                status={providerResult.status}
+                messages={messages}
+                statusUpdatedAt={providerResult.statusUpdatedAt}
+                errorMessage={providerResult.errorMessage}
+                ownNodeId={providerResult.ownNodeId}
+                peers={providerResult.peers}
+                consumerCount={providerResult.consumerCount}
+                logs={providerResult.logs}
+              />
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Generate roles (features/generate/generateDeck.ts's orchestrator/worker
-// split): which shared preset plans the deck and which one mass-produces the
-// per-segment slides, plus the worker fan-out width. Saved on change (no
-// explicit save button), same as VisionSection below; the editor's generate
-// form seeds its per-run pickers from these values.
+// タスク tab: one row per generation task (既定 / Vision / デッキ構成 /
+// スライド生成 / TTS), each a preset picker, plus the fan-out width and
+// pipeline mode. Labels stay one word; the explanation moves to a hover
+// tooltip (`data-tip`) per llm-settings-common-v1.md §3.2 — no more
+// always-visible hint paragraphs. "デッキ構成"/"スライド生成" replace the
+// internal "orchestrator"/"worker" naming in the UI only (data fields keep
+// their existing names — see localPrefs.ts's GenerateRolePrefs — since
+// nothing else references the UI label).
+//
+// The TTS row is a single model picker (no engine selector): browser
+// (unset) / "AI Networkにおまかせ" (only once a room's pseudo-provider has
+// been imported) / a shared preset card / a read-only fallback for a stored
+// pair that matches none of the above. voice/speed stay in the same row,
+// hidden for the browser/network-auto choices. reasoning_effort is NOT
+// duplicated here as a separate control — tc-presenter bakes it into the
+// preset itself (ModelPresetV1.reasoningEffort, edited on the AI接続 tab),
+// so picking a preset here already carries its reasoning effort; see the
+// worker's final report for the rationale of not adding a second,
+// preset-overriding control.
 
-interface RolesSectionProps {
+interface TasksTabProps {
   config: SharedLlmConfigV1
+  onChange: (config: SharedLlmConfigV1) => void
 }
 
-function RolesSection({ config }: RolesSectionProps) {
+function TasksTab({ config, onChange }: TasksTabProps) {
   const [prefs, setPrefs] = useState<GenerateRolePrefs>(loadGenerateRolePrefs)
+  const [visionPresetId, setVisionPresetId] = useState(loadVisionPresetId)
 
-  function update(patch: Partial<GenerateRolePrefs>) {
+  function updatePrefs(patch: Partial<GenerateRolePrefs>): void {
     const next = { ...prefs, ...patch }
     setPrefs(next)
     saveGenerateRolePrefs(next)
+  }
+
+  function handleVisionChange(next: string): void {
+    setVisionPresetId(next)
+    saveVisionPresetId(next)
   }
 
   // A preset that has since vanished from the shared config would render the
   // <select> on its first option while silently keeping the stale id — keep
   // it selectable instead, mirroring mergeOptions' philosophy for models.
   const presetOptions = (selected: string) => {
-    const known = config.presets.map((p) => ({ id: p.id, label: p.label }))
+    const known = config.presets.map((p) => ({ id: p.id, label: p.label || p.model }))
     if (selected && !config.presets.some((p) => p.id === selected)) known.push({ id: selected, label: selected })
     return known
   }
 
+  // --- TTS row -----------------------------------------------------------
+
+  const networkProviderId = config.providers.find((p) => isNetworkProviderBaseUrl(p.baseUrl))?.id ?? ''
+  const ttsConfig = config.tts
+  const matchedTtsPreset = config.presets.find((p) => p.providerId === ttsConfig?.providerId && p.model === ttsConfig?.model)
+  const isTtsNetworkAuto =
+    networkProviderId !== '' && ttsConfig?.providerId === networkProviderId && ttsConfig?.model === NETWORK_VOICE_AUTO_MODEL
+  const ttsSelectValue = isTtsNetworkAuto
+    ? '__network__'
+    : matchedTtsPreset
+      ? matchedTtsPreset.id
+      : ttsConfig?.model?.trim() && ttsConfig.model !== NETWORK_VOICE_AUTO_MODEL
+        ? '__current__'
+        : ''
+
+  const ttsProvider = ttsConfig?.providerId
+    ? config.providers.find((p) => p.id === ttsConfig.providerId)
+    : (() => {
+        const resolved = resolvePreset(config)
+        return resolved ? config.providers.find((p) => p.id === resolved.providerId) : undefined
+      })()
+  const ttsBaseUrl = ttsProvider?.baseUrl ?? ''
+  const ttsHasModel = Boolean(ttsConfig?.model?.trim())
+  const ttsIsNetwork = isTtsNetworkAuto || (ttsProvider ? isNetworkProviderBaseUrl(ttsProvider.baseUrl) : false)
+  const ttsShowVoicePicker = ttsHasModel && !ttsIsNetwork
+  const ttsUnresolvedWarning = ttsHasModel && !ttsIsNetwork && !ttsBaseUrl.trim()
+
+  function saveTts(patch: { providerId?: string; model: string; voice?: string; speed?: number }): void {
+    const next = cloneConfig(config)
+    const voiceConfig: VoiceConfigV1 = { model: patch.model }
+    if (patch.providerId) voiceConfig.providerId = patch.providerId
+    if (patch.voice) voiceConfig.voice = patch.voice
+    if (patch.speed !== undefined) voiceConfig.speed = patch.speed
+    next.tts = voiceConfig
+    saveLlmConfig(next)
+    onChange(next)
+  }
+
+  function handleTtsModelSelect(value: string): void {
+    if (value === '__current__') return
+    if (value === '') {
+      saveTts({ model: '' })
+      return
+    }
+    if (value === '__network__') {
+      saveTts({ providerId: networkProviderId, model: NETWORK_VOICE_AUTO_MODEL })
+      return
+    }
+    const preset = config.presets.find((p) => p.id === value)
+    if (!preset) return
+    saveTts({ providerId: preset.providerId, model: preset.model, voice: ttsConfig?.voice, speed: ttsConfig?.speed })
+  }
+
+  function handleTtsVoiceChange(voice: string): void {
+    saveTts({ providerId: ttsConfig?.providerId, model: ttsConfig?.model ?? '', voice, speed: ttsConfig?.speed })
+  }
+
+  const [ttsSpeedDraft, setTtsSpeedDraft] = useState(ttsConfig?.speed !== undefined ? String(ttsConfig.speed) : '')
+  useEffect(() => {
+    setTtsSpeedDraft(ttsConfig?.speed !== undefined ? String(ttsConfig.speed) : '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ttsConfig?.speed])
+
+  function handleTtsSpeedBlur(): void {
+    const trimmed = ttsSpeedDraft.trim()
+    const parsed = trimmed ? Number(trimmed) : undefined
+    saveTts({
+      providerId: ttsConfig?.providerId,
+      model: ttsConfig?.model ?? '',
+      voice: ttsConfig?.voice,
+      speed: parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined,
+    })
+  }
+
+  const [ttsTestState, setTtsTestState] = useState<'idle' | 'loading' | 'error'>('idle')
+  async function handleTtsTest(): Promise<void> {
+    setTtsTestState('loading')
+    try {
+      if (!ttsProvider || !ttsConfig?.model?.trim()) throw new Error(t('errors.llmNotConfigured'))
+      const blob = await synthesizeSpeech({
+        connection: { baseUrl: ttsProvider.baseUrl, apiKey: ttsProvider.apiKey },
+        model: ttsConfig.model,
+        voice: ttsConfig.voice || 'alloy',
+        text: t('settings.tts.testText'),
+      })
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      audio.addEventListener('ended', () => URL.revokeObjectURL(url))
+      await audio.play().catch(() => undefined)
+      setTtsTestState('idle')
+    } catch {
+      setTtsTestState('error')
+    }
+  }
+
   return (
-    <div class="set-panel">
-      <div class="set-panel__title">{t('settings.roles.title')}</div>
-      <p class="set-panel__hint">{t('settings.roles.hint')}</p>
-      {config.presets.length === 0 ? (
-        <div class="set-empty">{t('settings.roles.noPresets')}</div>
-      ) : (
-        <>
-          <div class="set-field">
-            <label for="set-role-orchestrator">{t('settings.roles.orchestrator')}</label>
+    <div class="settings-tab-panel">
+      <div class="task-model-item">
+        <span data-tip={t('settings.tasks.defaultTip')}>{t('settings.tasks.defaultLabel')}</span>
+        <div class="task-model-fields">
+          <div class="task-model-field">
             <select
-              id="set-role-orchestrator"
+              value={config.defaultPresetId}
+              onChange={(e) => {
+                const next = cloneConfig(config)
+                next.defaultPresetId = e.currentTarget.value
+                saveLlmConfig(next)
+                onChange(next)
+              }}
+              aria-label={t('settings.tasks.defaultLabel')}
+            >
+              <option value="">{t('settings.llm.reasoningEffortNotSent')}</option>
+              {config.presets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.label || preset.model}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="task-model-item">
+        <span data-tip={t('settings.vision.tip')}>{t('settings.vision.label')}</span>
+        <div class="task-model-fields">
+          <div class="task-model-field">
+            <select value={visionPresetId} onChange={(e) => handleVisionChange(e.currentTarget.value)} aria-label={t('settings.vision.label')}>
+              <option value="">{t('settings.vision.presetNone')}</option>
+              {presetOptions(visionPresetId).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="task-model-item">
+        <span data-tip={t('settings.tasks.orchestratorTip')}>{t('settings.tasks.orchestratorLabel')}</span>
+        <div class="task-model-fields">
+          <div class="task-model-field">
+            <select
               value={prefs.orchestratorPresetId}
-              onChange={(e) => update({ orchestratorPresetId: e.currentTarget.value })}
+              onChange={(e) => updatePrefs({ orchestratorPresetId: e.currentTarget.value })}
+              aria-label={t('settings.tasks.orchestratorLabel')}
             >
-              <option value="">{t('settings.roles.orchestratorDefault')}</option>
+              <option value="">{t('settings.tasks.orchestratorDefault')}</option>
               {presetOptions(prefs.orchestratorPresetId).map((p) => (
-                <option value={p.id} key={p.id}>
+                <option key={p.id} value={p.id}>
                   {p.label}
                 </option>
               ))}
             </select>
           </div>
-          <div class="set-field">
-            <label for="set-role-worker">{t('settings.roles.worker')}</label>
+        </div>
+      </div>
+
+      <div class="task-model-item">
+        <span data-tip={t('settings.tasks.workerTip')}>{t('settings.tasks.workerLabel')}</span>
+        <div class="task-model-fields">
+          <div class="task-model-field">
             <select
-              id="set-role-worker"
               value={prefs.workerPresetId}
-              onChange={(e) => update({ workerPresetId: e.currentTarget.value })}
+              onChange={(e) => updatePrefs({ workerPresetId: e.currentTarget.value })}
+              aria-label={t('settings.tasks.workerLabel')}
             >
-              <option value="">{t('settings.roles.workerDefault')}</option>
+              <option value="">{t('settings.tasks.workerDefault')}</option>
               {presetOptions(prefs.workerPresetId).map((p) => (
-                <option value={p.id} key={p.id}>
+                <option key={p.id} value={p.id}>
                   {p.label}
                 </option>
               ))}
             </select>
           </div>
-          <div class="set-field">
-            <label for="set-role-concurrency">{t('settings.roles.concurrency')}</label>
+          <div class="task-model-field">
             <input
-              id="set-role-concurrency"
               type="number"
               min={1}
               max={8}
               value={prefs.workerConcurrency}
-              onChange={(e) => update({ workerConcurrency: clampWorkerConcurrency(Number(e.currentTarget.value)) })}
+              onChange={(e) => updatePrefs({ workerConcurrency: clampWorkerConcurrency(Number(e.currentTarget.value)) })}
+              aria-label={t('settings.tasks.concurrency')}
+              title={t('settings.tasks.concurrency')}
             />
           </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Vision judge (lib/evaluator/visionJudge.ts)
-
-interface VisionSectionProps {
-  config: SharedLlmConfigV1
-}
-
-function VisionSection({ config }: VisionSectionProps) {
-  const [presetId, setPresetId] = useState(loadVisionPresetId)
-
-  function handleChange(next: string) {
-    setPresetId(next)
-    saveVisionPresetId(next)
-  }
-
-  return (
-    <div class="set-panel">
-      <div class="set-panel__title">{t('settings.vision.title')}</div>
-      <p class="set-panel__hint">{t('settings.vision.hint')}</p>
-      <div class="set-field">
-        <label for="set-vision-preset">{t('settings.vision.preset')}</label>
-        {config.presets.length === 0 ? (
-          <div class="set-empty">{t('settings.vision.noPresets')}</div>
-        ) : (
-          <select id="set-vision-preset" value={presetId} onChange={(e) => handleChange(e.currentTarget.value)}>
-            <option value="">{t('settings.vision.presetNone')}</option>
-            {config.presets.map((preset) => (
-              <option value={preset.id} key={preset.id}>
-                {preset.label}
-              </option>
-            ))}
-          </select>
-        )}
+        </div>
       </div>
+
+      <div class="task-model-item">
+        <span data-tip={t('settings.tasks.ttsTip')}>{t('settings.tasks.ttsLabel')}</span>
+        <div class="task-model-fields">
+          <div class="task-model-field">
+            <select value={ttsSelectValue} onChange={(e) => handleTtsModelSelect(e.currentTarget.value)} aria-label={t('settings.tasks.ttsLabel')}>
+              <option value="">{t('settings.tts.browserOption')}</option>
+              {networkProviderId ? <option value="__network__">{t('settings.tts.networkAutoOption')}</option> : null}
+              {ttsConfig?.model?.trim() && !matchedTtsPreset && !isTtsNetworkAuto ? (
+                <option value="__current__">{ttsConfig.model}</option>
+              ) : null}
+              {config.presets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.label || preset.model}
+                </option>
+              ))}
+            </select>
+          </div>
+          {ttsShowVoicePicker ? (
+            <div class="task-model-field">
+              <VoiceField
+                id="set-task-tts-voice"
+                value={ttsConfig?.voice ?? ''}
+                baseUrl={ttsBaseUrl}
+                apiKey={ttsProvider?.apiKey ?? ''}
+                onChange={handleTtsVoiceChange}
+              />
+            </div>
+          ) : null}
+          {ttsShowVoicePicker ? (
+            <div class="task-model-field">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={ttsSpeedDraft}
+                onInput={(e) => setTtsSpeedDraft(e.currentTarget.value)}
+                onBlur={handleTtsSpeedBlur}
+                placeholder={t('settings.tts.speed')}
+                aria-label={t('settings.tts.speed')}
+              />
+            </div>
+          ) : null}
+          <div class="task-model-field">
+            <button type="button" class="set-icon-btn" onClick={() => void handleTtsTest()} disabled={!ttsHasModel || ttsIsNetwork || ttsTestState === 'loading'} title={t('settings.tts.test')}>
+              <Play size={14} />
+            </button>
+          </div>
+        </div>
+      </div>
+      {ttsUnresolvedWarning ? <p class="error-text">{t('settings.tts.unresolvedWarning')}</p> : null}
+      {ttsTestState === 'error' ? <p class="error-text">{t('settings.tts.testError', { message: '' })}</p> : null}
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Language
+// Language + onboarding replay. Always visible above the tab bar (not a tab
+// of their own), matching tc-translate's ui-language-row placement.
 
-function LocaleSection() {
+function LocaleRow() {
   const [locale, setLocaleState] = useState<Locale>(getLocale())
   useEffect(() => subscribeLocale(setLocaleState), [])
 
   return (
-    <div class="set-panel">
-      <div class="set-panel__title">{t('settings.locale.title')}</div>
+    <div class="set-locale-row">
       <div class="set-segmented">
-        <button
-          type="button"
-          class={`set-segmented__item${locale === 'en' ? ' is-active' : ''}`}
-          onClick={() => setLocale('en')}
-        >
+        <button type="button" class={`set-segmented__item${locale === 'en' ? ' is-active' : ''}`} onClick={() => setLocale('en')}>
           {t('settings.locale.en')}
         </button>
-        <button
-          type="button"
-          class={`set-segmented__item${locale === 'ja' ? ' is-active' : ''}`}
-          onClick={() => setLocale('ja')}
-        >
+        <button type="button" class={`set-segmented__item${locale === 'ja' ? ' is-active' : ''}`} onClick={() => setLocale('ja')}>
           {t('settings.locale.ja')}
         </button>
       </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Onboarding replay (lib/onboarding.ts + components/Onboarding.tsx)
-
-function OnboardingSection() {
-  return (
-    <div class="set-panel">
-      <div class="set-panel__title">{t('settings.onboarding.title')}</div>
-      <p class="set-panel__hint">{t('settings.onboarding.hint')}</p>
-      <button type="button" class="set-btn set-btn--primary" onClick={() => requestOnboarding()}>
+      <button type="button" class="set-btn" onClick={() => requestOnboarding()} title={t('settings.onboarding.hint')}>
         <Sparkles size={14} />
         {t('settings.onboarding.open')}
       </button>
@@ -1212,21 +1279,42 @@ function OnboardingSection() {
 
 // ---------------------------------------------------------------------------
 
+type SettingsSubTab = 'connection' | 'network' | 'tasks'
+
+const SUB_TABS: Array<{ id: SettingsSubTab; labelKey: 'settings.tabs.connection' | 'settings.tabs.network' | 'settings.tabs.tasks' }> = [
+  { id: 'connection', labelKey: 'settings.tabs.connection' },
+  { id: 'network', labelKey: 'settings.tabs.network' },
+  { id: 'tasks', labelKey: 'settings.tabs.tasks' },
+]
+
 export default function SettingsTab(_props: SettingsTabProps) {
   const [config, setConfig] = useState<SharedLlmConfigV1>(() => loadLlmConfig() ?? emptyLlmConfig())
+  const [activeTab, setActiveTab] = useState<SettingsSubTab>('connection')
 
   useEffect(() => subscribeLlmConfig((next) => setConfig(next ?? emptyLlmConfig())), [])
 
   return (
     <div class="set-tab">
-      <LlmSection config={config} onChange={setConfig} />
-      <RolesSection config={config} />
-      <VisionSection config={config} />
-      <TtsSection config={config} onChange={setConfig} />
-      <TtsLangSection config={config} />
-      <NetworkSection config={config} onChange={setConfig} />
-      <LocaleSection />
-      <OnboardingSection />
+      <LocaleRow />
+
+      <div class="settings-tab-bar" role="tablist" aria-label={t('settings.tabs.ariaLabel')}>
+        {SUB_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            class={`settings-tab ${activeTab === tab.id ? 'active' : ''}`}
+            aria-selected={activeTab === tab.id}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {t(tab.labelKey)}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'connection' ? <ConnectionTab config={config} onChange={setConfig} /> : null}
+      {activeTab === 'network' ? <NetworkTab config={config} onChange={setConfig} /> : null}
+      {activeTab === 'tasks' ? <TasksTab config={config} onChange={setConfig} /> : null}
     </div>
   )
 }

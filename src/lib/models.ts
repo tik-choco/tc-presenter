@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks'
 import { fetchModels, formatMistaiError, MESSAGES_JA, MESSAGES_EN, type FetchFn } from '@tik-choco/mistai'
 import { getLocale, t, type TranslationKey } from '../i18n'
+import { isNetworkProviderBaseUrl } from './networkModels'
 
 export type ModelFetchStatus = 'idle' | 'loading' | 'done' | 'error'
 
@@ -49,7 +50,9 @@ export function useFetchedOptions(
   const refresh = useCallback(() => {
     const { baseUrl, apiKey } = configRef.current
     const trimmedBaseUrl = baseUrl.trim()
-    if (!trimmedBaseUrl) {
+    // mist-network:// pseudo-providers have no HTTP /models or /voices
+    // endpoint to fetch — see llm-settings-common-v1.md §5.3 checklist #2.
+    if (!trimmedBaseUrl || isNetworkProviderBaseUrl(trimmedBaseUrl)) {
       setOptions([])
       setStatus('idle')
       setErrorMessage('')

@@ -1,13 +1,25 @@
-// GenerateDeckFn (types.ts) implementation: script-first pipeline. Writes the
-// full spoken narration BEFORE any slide exists (generateScript, one call,
-// modeled on ../tc-news/src/lib/programGenerate.ts's "narration first"
-// approach), then generates ONE visualized slide per script segment
-// (generateSegmentSlide) — the LLM freely chooses each slide's type/layout
-// and its design-spec.md block composition, and speakerNotes is always the
-// segment's narration verbatim regardless of what the slide call returns —
-// then evaluates -> refines. Pure service module (no Preact) so it can be
-// unit tested and reused headlessly (e.g. by the editor tab's "generate"
-// action) without pulling in any UI.
+// GenerateDeckFn (types.ts) implementation, two pipeline shapes
+// (GenerateOptions.pipelineMode):
+//
+// 'script_first' (legacy default at this API level): writes the full spoken
+// narration BEFORE any slide exists (generateScript, one call, modeled on
+// ../tc-news/src/lib/programGenerate.ts's "narration first" approach), then
+// generates ONE visualized slide per script segment (generateSegmentSlide) —
+// speakerNotes is always the segment's narration verbatim regardless of what
+// the slide call returns — then evaluates -> refines.
+//
+// 'plan_fanout' (the settings UI's default, modeled on ../tc-translate's
+// planTranslationFanOut -> per-language-worker split): the orchestrator
+// preset makes ONE compact plan call (generatePlan — headings + terse
+// briefs, no narration), then the fan-out workers each write their segment's
+// narration AND slide in one call (generateAuthoredSegment) on the worker
+// preset — so an expensive orchestrator preset's token spend is limited to
+// the plan call while a cheaper worker preset carries the bulk of output
+// tokens (evaluation and batch refine also run on the worker preset there).
+//
+// Pure service module (no Preact) so it can be unit tested and reused
+// headlessly (e.g. by the editor tab's "generate" action) without pulling in
+// any UI.
 //
 // Local-LLM-friendly by design (PLAN.md: "Local LLM 対応...プロンプトは簡潔・
 // 構造化"): the script call and each segment's slide-generation call are
@@ -35,14 +47,27 @@ import {
   type SourceMaterial,
 } from '../../types'
 import { planLayoutHints } from './layoutPlan'
-import { extractJson, newId, normalizeScript, normalizeSlide, type Script, type ScriptSegment } from './parse'
-import { buildRefineMessages, buildScriptMessages, buildScriptRefineMessages, buildSegmentSlideMessages, buildSlideRefineMessages } from './prompts'
+import { extractJson, newId, normalizeAuthoredSegment, normalizePlanScript, normalizeScript, normalizeSlide, type Script, type ScriptSegment } from './parse'
+import {
+  buildDeckPlanMessages,
+  buildRefineMessages,
+  buildScriptMessages,
+  buildScriptRefineMessages,
+  buildSegmentAuthorMessages,
+  buildSegmentSlideMessages,
+  buildSlideRefineMessages,
+} from './prompts'
 import { checkScript } from './scriptCheck'
 import { DEFAULT_DECK_THEME } from './theme'
 
 const SCRIPT_TIMEOUT_MS = 90_000
 const SEGMENT_TIMEOUT_MS = 60_000
 const REFINE_TIMEOUT_MS = 180_000
+// plan_fanout mode: the plan call's output is a fraction of a full script's,
+// but each worker call now writes narration + slide (roughly double a
+// visualize-only segment call's output).
+const PLAN_TIMEOUT_MS = 60_000
+const SEGMENT_AUTHOR_TIMEOUT_MS = 90_000
 
 // Fixed low temperature for every generation/refine call in this pipeline —
 // JSON-shape stability matters more than creative variance here, mirroring
@@ -60,6 +85,21 @@ async function generateScript(sources: SourceMaterial[], opts: GenerateOptions):
     return normalizeScript(extractJson(raw), fallbackTitle, opts.maxSlides)
   } catch {
     return normalizeScript(null, fallbackTitle, opts.maxSlides)
+  }
+}
+
+/** plan_fanout's orchestrator call (GenerateOptions.pipelineMode doc,
+ * modeled on ../tc-translate's planTranslationFanOut): ONE compact call that
+ * plans segment structure without writing narration — the fan-out workers
+ * (generateAuthoredSegment) write it per segment instead. Same never-throws
+ * fallback contract as generateScript. */
+async function generatePlan(sources: SourceMaterial[], opts: GenerateOptions): Promise<Script> {
+  const fallbackTitle = sources[0]?.title.trim() || 'Untitled Deck'
+  try {
+    const raw = await requestChatCompletion(buildDeckPlanMessages(sources, opts), chatOpts(opts, PLAN_TIMEOUT_MS))
+    return normalizePlanScript(extractJson(raw), fallbackTitle, opts.maxSlides)
+  } catch {
+    return normalizePlanScript(null, fallbackTitle, opts.maxSlides)
   }
 }
 
@@ -177,6 +217,40 @@ async function generateSegmentSlide(
     return { slide: { ...slide, speakerNotes: segment.narration }, fallback: false }
   } catch {
     return { slide: fallbackSegmentSlide(segment, index), fallback: true }
+  }
+}
+
+/** plan_fanout's worker unit (mirroring ../tc-translate's
+ * translateSegmentForLanguage): ONE call that writes this segment's full
+ * spoken narration from the orchestrator's brief AND generates its slide —
+ * vs. generateSegmentSlide, which only visualizes an already-written
+ * narration. Returns the authored narration so the caller can promote it
+ * into the slot's segment (speakerNotes, refine grounding, partial-deck
+ * snapshots). On failure the fallback slide keeps the brief as its
+ * speakerNotes — same "never mark a fallback done" checkpoint contract as
+ * generateSegmentSlide. */
+async function generateAuthoredSegment(
+  segment: ScriptSegment,
+  segmentNumber: number,
+  totalSegments: number,
+  script: Script,
+  sources: SourceMaterial[],
+  opts: GenerateOptions,
+  index: number,
+  layoutHint?: string,
+): Promise<{ narration: string; slide: Slide; fallback: boolean }> {
+  try {
+    const raw = await requestChatCompletion(
+      buildSegmentAuthorMessages(segment, segmentNumber, totalSegments, script, sources, opts, layoutHint),
+      chatOpts(opts, SEGMENT_AUTHOR_TIMEOUT_MS),
+    )
+    const parsed = extractJson(raw)
+    const authored = parsed !== null ? normalizeAuthoredSegment(parsed, index) : null
+    if (!authored) return { narration: segment.narration, slide: fallbackSegmentSlide(segment, index), fallback: true }
+    const narration = authored.narration || segment.narration
+    return { narration, slide: { ...authored.slide, speakerNotes: narration }, fallback: false }
+  } catch {
+    return { narration: segment.narration, slide: fallbackSegmentSlide(segment, index), fallback: true }
   }
 }
 
@@ -489,25 +563,45 @@ export const generateDeck: GenerateDeckFn = async (sources, opts, onProgress) =>
   const maxIterations = opts.maxRefineIterations ?? DEFAULT_MAX_REFINE_ITERATIONS
   const useLlmJudge = opts.useLlmJudge ?? true
   const useVisionJudge = opts.useVisionJudge ?? false
+
+  // Orchestrator/worker preset split (types.ts's workerPresetId doc): the
+  // main presetId plans; the worker preset — when set — mass-produces the
+  // per-segment slides and the small per-slide refine calls.
+  const workerOpts: GenerateOptions = opts.workerPresetId ? { ...opts, presetId: opts.workerPresetId } : opts
+  const pipelineMode = opts.pipelineMode ?? 'script_first'
+  // plan_fanout reserves the orchestrator preset for the single plan call
+  // (types.ts's pipelineMode doc — the whole point is keeping the expensive
+  // planning preset's token spend minimal), so the LLM judge and the
+  // deck-level batch refine run on the worker preset there. script_first
+  // keeps them on the orchestrator preset, the historical behavior.
+  const heavyOpts = pipelineMode === 'plan_fanout' ? workerOpts : opts
+
   const evalOpts = {
     useLlmJudge,
     useVisionJudge,
     visionPresetId: opts.visionPresetId,
-    presetId: opts.presetId,
+    presetId: heavyOpts.presetId,
     connection: opts.connection,
     signal: opts.signal,
   }
 
   const resume = opts.resume
-  // Orchestrator/worker preset split (types.ts's workerPresetId doc): the
-  // main presetId plans (script, evaluation, deck-level batch refine); the
-  // worker preset — when set — mass-produces the per-segment slides and the
-  // small per-slide refine calls.
-  const workerOpts: GenerateOptions = opts.workerPresetId ? { ...opts, presetId: opts.workerPresetId } : opts
 
   let script: Script
   if (resume?.script) {
     script = resume.script
+  } else if (pipelineMode === 'plan_fanout') {
+    // tc-translate-style orchestrator: ONE compact plan call; the narration
+    // is written per segment by the fan-out workers below.
+    // checkAndFixScript is skipped — its rules judge full spoken narration,
+    // which a plan's keyword briefs are not.
+    onProgress?.({ stage: 'script', message: 'Planning deck structure' })
+    script = await generatePlan(sources, opts)
+    throwIfAborted(opts.signal)
+    // `script` in the event is the checkpoint-commit payload (segment
+    // narrations still hold the plan briefs; each completed slide's
+    // speakerNotes carries the worker-authored narration).
+    onProgress?.({ stage: 'script', script })
   } else {
     onProgress?.({ stage: 'script', message: 'Writing presentation script' })
     script = await generateScript(sources, opts)
@@ -613,21 +707,46 @@ export const generateDeck: GenerateDeckFn = async (sources, opts, onProgress) =>
           segmentsDone: slots.filter(Boolean).length,
           segmentsTotal: total,
         })
-        const { slide, fallback } = await generateSegmentSlide(
-          segment,
-          i + 1,
-          total,
-          sources,
-          workerOpts,
-          i + 2, // placeholder index — the final renumbering pass below is authoritative
-          concurrency === 1 ? previousLayoutSignature : undefined,
-          layoutHints[i],
-        )
+        let committedSegment = segment
+        let slide: Slide
+        let fallback: boolean
+        if (pipelineMode === 'plan_fanout') {
+          // Worker writes narration + slide in one call; the authored
+          // narration is promoted into this slot's segment so speaker notes,
+          // refine grounding and partial-deck snapshots all read the real
+          // narration, not the plan brief.
+          const authored = await generateAuthoredSegment(
+            segment,
+            i + 1,
+            total,
+            script,
+            sources,
+            workerOpts,
+            i + 2, // placeholder index — the final renumbering pass below is authoritative
+            layoutHints[i],
+          )
+          slide = authored.slide
+          fallback = authored.fallback
+          if (!authored.fallback) committedSegment = { ...segment, narration: authored.narration }
+        } else {
+          const generated = await generateSegmentSlide(
+            segment,
+            i + 1,
+            total,
+            sources,
+            workerOpts,
+            i + 2, // placeholder index — the final renumbering pass below is authoritative
+            concurrency === 1 ? previousLayoutSignature : undefined,
+            layoutHints[i],
+          )
+          slide = generated.slide
+          fallback = generated.fallback
+        }
         // Before the slot commit: an abort mid-call surfaces as a swallowed
         // fallback slide, which must not be committed as this segment's
         // result — the resumed run should retry it.
         throwIfAborted(opts.signal)
-        slots[i] = { segment, slide }
+        slots[i] = { segment: committedSegment, slide }
         previousLayoutSignature = layoutSignature(slide)
         // segmentIndex/slide/slideIsFallback = the checkpoint-commit
         // payload; partialDeck etc = the live UI snapshot.
@@ -637,7 +756,11 @@ export const generateDeck: GenerateDeckFn = async (sources, opts, onProgress) =>
     await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => worker()))
 
     const segmentSlides = slots.filter((s): s is { segment: ScriptSegment; slide: Slide } => s !== null)
-    for (const { segment, slide } of segmentSlides) segmentNarrationBySlideId.set(slide.id, segment.narration)
+    // speakerNotes preferred over segment.narration: identical in
+    // script_first mode, but a plan_fanout slide resumed from a checkpoint
+    // carries the worker-authored narration only in its speakerNotes (the
+    // checkpointed script's segments still hold the plan briefs).
+    for (const { segment, slide } of segmentSlides) segmentNarrationBySlideId.set(slide.id, slide.speakerNotes || segment.narration)
 
     // Cover -> [agenda] -> per-segment slides with section_break dividers at
     // chapter boundaries, conclusion forced to type "summary" -> deterministic
@@ -673,7 +796,7 @@ export const generateDeck: GenerateDeckFn = async (sources, opts, onProgress) =>
 
     if (refineStrategy === 'batch') {
       onProgress?.({ stage: 'refine', iteration, score: score.total, message: 'Regenerating with feedback' })
-      deck = await refineDeck(deck, score, opts)
+      deck = await refineDeck(deck, score, heavyOpts)
     } else {
       const weak = identifyWeakSlides(deck, score)
       if (weak.length > 0) {
@@ -685,7 +808,7 @@ export const generateDeck: GenerateDeckFn = async (sources, opts, onProgress) =>
         // fault, so fall back to one whole-deck batch refine call for this
         // iteration only.
         onProgress?.({ stage: 'refine', iteration, score: score.total, message: 'Regenerating with feedback (deck-level fallback)' })
-        deck = await refineDeck(deck, score, opts)
+        deck = await refineDeck(deck, score, heavyOpts)
       }
     }
     throwIfAborted(opts.signal)

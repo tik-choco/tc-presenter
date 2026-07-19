@@ -235,7 +235,7 @@ export async function exportDeckToVideo(
     const destination = audioCtx.createMediaStreamDestination()
 
     const config = loadLlmConfig()
-    const target = config ? resolveNarrationTarget(config, deck.lang) : null
+    const target = config ? resolveNarrationTarget(config) : null
 
     videoStream = canvas.captureStream(FRAME_RATE)
     combinedStream = new MediaStream([...videoStream.getVideoTracks(), ...destination.stream.getAudioTracks()])

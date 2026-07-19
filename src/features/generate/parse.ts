@@ -711,3 +711,62 @@ export function normalizeScript(raw: unknown, fallbackTitle: string, maxSlides?:
     segments: [{ section: 'body', heading: title.slice(0, 20) || 'Overview', narration: `This presentation covers ${title}.` }],
   }
 }
+
+/** Normalizes the plan-fan-out orchestrator response (prompts.ts's
+ * buildDeckPlanMessages — GenerateOptions.pipelineMode 'plan_fanout'): the
+ * same Script shape normalizeScript produces, but each segment carries a
+ * terse `brief` instead of full narration. `narration` is seeded with the
+ * brief text so every existing Script consumer (pending placeholders,
+ * fallback slides, checkpoints) keeps working until the worker's authored
+ * narration replaces it. Tolerates a model that wrote `narration` instead
+ * of `brief` (or both) — whichever is present becomes the brief. */
+export function normalizePlanScript(raw: unknown, fallbackTitle: string, maxSlides?: number): Script {
+  const r = record(raw)
+  const title = str(r.title, fallbackTitle).trim() || fallbackTitle
+  const subtitle = str(r.subtitle).trim()
+  const segmentsRaw = Array.isArray(r.segments) ? r.segments : []
+  const cap = maxSlides && maxSlides > 0 ? Math.min(MAX_SCRIPT_SEGMENTS, Math.trunc(maxSlides)) : MAX_SCRIPT_SEGMENTS
+
+  const segments: ScriptSegment[] = segmentsRaw
+    .map((s): ScriptSegment | null => {
+      const sr = record(s)
+      const heading = str(sr.heading).trim()
+      const brief = str(sr.brief).trim() || str(sr.narration).trim()
+      if (!heading || !brief) return null
+      const chapter = str(sr.chapter).trim()
+      const keyTakeaway = str(sr.keyTakeaway).trim()
+      return {
+        section: isOneOf(sr.section, SCRIPT_SECTIONS) ? sr.section : 'body',
+        heading,
+        narration: brief,
+        brief,
+        ...(chapter ? { chapter } : {}),
+        ...(keyTakeaway ? { keyTakeaway } : {}),
+      }
+    })
+    .filter((s): s is ScriptSegment => s !== null)
+    .slice(0, cap)
+
+  if (segments.length > 0) return { title, subtitle, segments }
+
+  return {
+    title,
+    subtitle,
+    segments: [{ section: 'body', heading: title.slice(0, 20) || 'Overview', narration: `This presentation covers ${title}.` }],
+  }
+}
+
+/** Normalizes one plan-fan-out worker response (prompts.ts's
+ * buildSegmentAuthorMessages): `{"narration", "slide"}` in one completion.
+ * Tolerates a model that inlined the slide fields at the top level instead
+ * of nesting them under "slide". Returns null (caller falls back, same as a
+ * failed slide call) when neither a narration nor any usable slide content
+ * came back. */
+export function normalizeAuthoredSegment(raw: unknown, index: number): { narration: string; slide: Slide } | null {
+  const r = record(raw)
+  const narration = str(r.narration).trim()
+  const slideRaw = r.slide !== null && typeof r.slide === 'object' ? r.slide : raw
+  const slide = normalizeSlide(slideRaw, index)
+  if (!narration && !slide.title.text) return null
+  return { narration, slide }
+}

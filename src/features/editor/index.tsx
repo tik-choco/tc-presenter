@@ -783,6 +783,11 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
     // (checked) toggle leaves opts.scriptCheck unset like the other
     // default-true knobs above.
     if (!scriptCheck) opts.scriptCheck = false
+    // Always set explicitly from the saved prefs (no per-run UI for this):
+    // the GenerateOptions-level default stays 'script_first' (safe for
+    // non-UI callers), while the prefs default is 'plan_fanout' — so an
+    // unset field would silently flip modes.
+    opts.pipelineMode = roleDefaults.pipelineMode
     if (workerPresetId) opts.workerPresetId = workerPresetId
     const workerConcurrencyNum = Number(workerConcurrency.trim())
     if (Number.isFinite(workerConcurrencyNum) && workerConcurrencyNum > 1) {
