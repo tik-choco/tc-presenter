@@ -217,14 +217,17 @@ function ModelField(props: { id: string; value: string; baseUrl: string; apiKey:
 
 /** Voice picker: mirrors ModelField's UX but sources options from
  * useVoiceOptions(baseUrl, apiKey). Most OpenAI-compatible TTS endpoints
- * don't expose a voices-listing endpoint, so on a fetch error we fall back
- * to OPENAI_TTS_VOICES (the standard OpenAI voice set) instead of leaving
- * the select empty. */
+ * don't expose a voices-listing endpoint, so when the fetch comes back empty
+ * (mistai's `fetchVoices` resolves `[]` rather than rejecting in that case —
+ * see lib/voices.ts) we fall back to OPENAI_TTS_VOICES (the standard OpenAI
+ * voice set) instead of leaving the select empty. The `status === 'error'`
+ * branches stay as a defensive fallback for the (now unreachable via
+ * fetchVoices) hook-level rejection path. */
 function VoiceField(props: { id: string; value: string; baseUrl: string; apiKey: string; onChange: (voice: string) => void }) {
   const { id, value, baseUrl, apiKey, onChange } = props
   const { options, status, refresh } = useVoiceOptions(baseUrl, apiKey)
 
-  const fetchedOrFallback = status === 'error' ? OPENAI_TTS_VOICES : options
+  const fetchedOrFallback = options.length > 0 ? options : OPENAI_TTS_VOICES
   const selectableOptions = mergeOptions(value, fetchedOrFallback)
   const canFetch = baseUrl.trim().length > 0 && !isNetworkProviderBaseUrl(baseUrl)
   const statusText =
@@ -233,7 +236,9 @@ function VoiceField(props: { id: string; value: string; baseUrl: string; apiKey:
       : status === 'error'
         ? t('settings.tts.voiceListErrorFallback')
         : status === 'done'
-          ? t('settings.tts.voiceListFetched', { count: options.length })
+          ? options.length > 0
+            ? t('settings.tts.voiceListFetched', { count: options.length })
+            : t('settings.tts.voiceListErrorFallback')
           : ''
 
   return (
@@ -988,6 +993,14 @@ function TasksTab({ config, onChange }: TasksTabProps) {
   const [prefs, setPrefs] = useState<GenerateRolePrefs>(loadGenerateRolePrefs)
   const [visionPresetId, setVisionPresetId] = useState(loadVisionPresetId)
 
+  // Status-only subscription to the shared networkClient singleton (does not
+  // itself open/close the connection — that lifecycle lives in NetworkTab's
+  // useConsumerConnection call, see that component). Gates AI-Network-derived
+  // presets/options in the selects below (option-network styling, task-badge
+  // badge, and hiding those options entirely while disconnected).
+  const consumerStatus = useConsumerStatus(networkClient)
+  const networkConnected = consumerStatus.phase === 'connected'
+
   function updatePrefs(patch: Partial<GenerateRolePrefs>): void {
     const next = { ...prefs, ...patch }
     setPrefs(next)
@@ -999,12 +1012,17 @@ function TasksTab({ config, onChange }: TasksTabProps) {
     saveVisionPresetId(next)
   }
 
+  function isNetworkPresetProvider(providerId: string): boolean {
+    const provider = config.providers.find((p) => p.id === providerId)
+    return provider ? isNetworkProviderBaseUrl(provider.baseUrl) : false
+  }
+
   // A preset that has since vanished from the shared config would render the
   // <select> on its first option while silently keeping the stale id — keep
   // it selectable instead, mirroring mergeOptions' philosophy for models.
   const presetOptions = (selected: string) => {
-    const known = config.presets.map((p) => ({ id: p.id, label: p.label || p.model }))
-    if (selected && !config.presets.some((p) => p.id === selected)) known.push({ id: selected, label: selected })
+    const known = config.presets.map((p) => ({ id: p.id, label: p.label || p.model, isNetwork: isNetworkPresetProvider(p.providerId) }))
+    if (selected && !config.presets.some((p) => p.id === selected)) known.push({ id: selected, label: selected, isNetwork: false })
     return known
   }
 
@@ -1120,12 +1138,17 @@ function TasksTab({ config, onChange }: TasksTabProps) {
               aria-label={t('settings.tasks.defaultLabel')}
             >
               <option value="">{t('settings.llm.reasoningEffortNotSent')}</option>
-              {config.presets.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.label || preset.model}
-                </option>
-              ))}
+              {config.presets
+                .filter((preset) => networkConnected || !isNetworkPresetProvider(preset.providerId))
+                .map((preset) => (
+                  <option key={preset.id} value={preset.id} class={isNetworkPresetProvider(preset.providerId) ? 'option-network' : undefined}>
+                    {preset.label || preset.model}
+                  </option>
+                ))}
             </select>
+            {networkConnected && isNetworkPresetProvider(config.presets.find((p) => p.id === config.defaultPresetId)?.providerId ?? '') ? (
+              <span class="task-badge task-badge-network">{t('settings.llm.badgeNetwork')}</span>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1136,12 +1159,17 @@ function TasksTab({ config, onChange }: TasksTabProps) {
           <div class="task-model-field">
             <select value={visionPresetId} onChange={(e) => handleVisionChange(e.currentTarget.value)} aria-label={t('settings.vision.label')}>
               <option value="">{t('settings.vision.presetNone')}</option>
-              {presetOptions(visionPresetId).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
+              {presetOptions(visionPresetId)
+                .filter((p) => networkConnected || !p.isNetwork)
+                .map((p) => (
+                  <option key={p.id} value={p.id} class={p.isNetwork ? 'option-network' : undefined}>
+                    {p.label}
+                  </option>
+                ))}
             </select>
+            {networkConnected && isNetworkPresetProvider(config.presets.find((p) => p.id === visionPresetId)?.providerId ?? '') ? (
+              <span class="task-badge task-badge-network">{t('settings.llm.badgeNetwork')}</span>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1156,12 +1184,17 @@ function TasksTab({ config, onChange }: TasksTabProps) {
               aria-label={t('settings.tasks.orchestratorLabel')}
             >
               <option value="">{t('settings.tasks.orchestratorDefault')}</option>
-              {presetOptions(prefs.orchestratorPresetId).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
+              {presetOptions(prefs.orchestratorPresetId)
+                .filter((p) => networkConnected || !p.isNetwork)
+                .map((p) => (
+                  <option key={p.id} value={p.id} class={p.isNetwork ? 'option-network' : undefined}>
+                    {p.label}
+                  </option>
+                ))}
             </select>
+            {networkConnected && isNetworkPresetProvider(config.presets.find((p) => p.id === prefs.orchestratorPresetId)?.providerId ?? '') ? (
+              <span class="task-badge task-badge-network">{t('settings.llm.badgeNetwork')}</span>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1176,12 +1209,17 @@ function TasksTab({ config, onChange }: TasksTabProps) {
               aria-label={t('settings.tasks.workerLabel')}
             >
               <option value="">{t('settings.tasks.workerDefault')}</option>
-              {presetOptions(prefs.workerPresetId).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
+              {presetOptions(prefs.workerPresetId)
+                .filter((p) => networkConnected || !p.isNetwork)
+                .map((p) => (
+                  <option key={p.id} value={p.id} class={p.isNetwork ? 'option-network' : undefined}>
+                    {p.label}
+                  </option>
+                ))}
             </select>
+            {networkConnected && isNetworkPresetProvider(config.presets.find((p) => p.id === prefs.workerPresetId)?.providerId ?? '') ? (
+              <span class="task-badge task-badge-network">{t('settings.llm.badgeNetwork')}</span>
+            ) : null}
           </div>
           <div class="task-model-field">
             <input
@@ -1203,16 +1241,23 @@ function TasksTab({ config, onChange }: TasksTabProps) {
           <div class="task-model-field">
             <select value={ttsSelectValue} onChange={(e) => handleTtsModelSelect(e.currentTarget.value)} aria-label={t('settings.tasks.ttsLabel')}>
               <option value="">{t('settings.tts.browserOption')}</option>
-              {networkProviderId ? <option value="__network__">{t('settings.tts.networkAutoOption')}</option> : null}
+              {networkProviderId && networkConnected ? (
+                <option value="__network__" class="option-network">
+                  {t('settings.tts.networkAutoOption')}
+                </option>
+              ) : null}
               {ttsConfig?.model?.trim() && !matchedTtsPreset && !isTtsNetworkAuto ? (
                 <option value="__current__">{ttsConfig.model}</option>
               ) : null}
-              {config.presets.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.label || preset.model}
-                </option>
-              ))}
+              {config.presets
+                .filter((preset) => networkConnected || !isNetworkPresetProvider(preset.providerId))
+                .map((preset) => (
+                  <option key={preset.id} value={preset.id} class={isNetworkPresetProvider(preset.providerId) ? 'option-network' : undefined}>
+                    {preset.label || preset.model}
+                  </option>
+                ))}
             </select>
+            {networkConnected && ttsIsNetwork ? <span class="task-badge task-badge-network">{t('settings.llm.badgeNetwork')}</span> : null}
           </div>
           {ttsShowVoicePicker ? (
             <div class="task-model-field">
