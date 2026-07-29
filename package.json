@@ -15,6 +15,7 @@
   "dependencies": {
     "@pixiv/three-vrm": "^3.4.2",
     "@tik-choco/mistai": "github:tik-choco-lab/mistai",
+    "@tik-choco/mistlib": "0.6.0",
     "html-to-image": "^1.11.13",
     "jspdf": "^4.2.1",
     "lucide-preact": "^1.16.0",
