@@ -1,25 +1,12 @@
-// Vision-LLM description generator for editor-uploaded images
-// (features/editor's image upload flow, ImageRefBlock.description in
-// src/types.ts). Mirrors lib/evaluator/visionJudge.ts's multimodal request
-// shape (ChatContentPart image_url part, connection: 'api' since images
-// can't travel over the AI Network's text-only protocol — see llm.ts's
-// requestChatCompletion network-branch guard).
-//
-// lib/ must not import from features/ (see CLAUDE.md), so this module takes
-// a plain `presetId` rather than resolving the shared "vision preset"
-// setting itself — the caller (features/editor) reads
-// features/settings/localPrefs.ts's loadVisionPresetId() and passes the
-// result through opts.presetId.
+import type { ModelRefV1 } from '@tik-choco/mistai/llm-config'
+// Image descriptions use the vision task ref, including room vision via the tunnel.
 import { requestChatCompletion, type ChatContentPart, type MultimodalChatMessage } from './llm'
 
 const DESCRIBE_TIMEOUT_MS = 90_000
 
 export interface DescribeImageOptions {
-  /** tc-shared-llm-config-v1 preset id for the vision-capable model; "" /
-   * omitted falls back to the config's defaultPresetId (which may not be
-   * vision-capable — callers should prefer passing their resolved vision
-   * preset here). */
-  presetId?: string
+  /** Optional per-call vision model; otherwise uses the configured vision task. */
+  modelRef?: ModelRefV1 | null
   /** Output language for the description (e.g. "ja", "en"). Default 'ja'. */
   lang?: string
   signal?: AbortSignal
@@ -33,7 +20,7 @@ function systemPrompt(lang: string): string {
  * Describes `dataUri` (an image data: URI) with a vision-capable LLM, for use
  * as an ImageRefBlock.description — feeds the text-only generation/refine/
  * evaluation pipeline and doubles as the rendered <img>'s alt text. Returns
- * null (never throws) on any failure: no/non-vision preset configured,
+ * null (never throws) on any failure: no usable vision model configured,
  * timeout, or an empty response.
  */
 export async function describeImage(dataUri: string, opts: DescribeImageOptions = {}): Promise<string | null> {
@@ -50,10 +37,8 @@ export async function describeImage(dataUri: string, opts: DescribeImageOptions 
 
   try {
     const raw = await requestChatCompletion(messages, {
-      presetId: opts.presetId,
-      connection: 'api',
+      modelRef: opts.modelRef, task: 'vision',
       signal: opts.signal,
-      temperature: 0.3,
       timeoutMs: DESCRIBE_TIMEOUT_MS,
     })
     const text = raw.trim()

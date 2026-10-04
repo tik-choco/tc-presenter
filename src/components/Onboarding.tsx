@@ -7,10 +7,12 @@ import { Sparkles, Cpu, Check, X, ArrowLeft, ArrowRight, Plug, FileText, WandSpa
 import { t } from '../i18n'
 import {
   emptyLlmConfig,
-  ensureProvider,
-  ensurePreset,
+  createProvider,
+  patchProvider,
+  normalizeBaseUrl,
+  setDefaultModel,
   loadLlmConfig,
-  resolvePreset,
+  resolveModel,
   saveLlmConfig,
   type ResolvedLlmTargetV1,
 } from '../lib/llmConfig'
@@ -34,11 +36,11 @@ function inputValue(event: Event): string {
 export function Onboarding(props: { onClose: () => void }) {
   const [step, setStep] = useState(0)
 
-  // LLM draft starts from the shared config's current default preset so
+  // LLM draft starts from the shared config's current default model so
   // re-running the wizard shows (and edits) the real current connection
   // instead of blank fields.
   const [llm, setLlm] = useState<LlmDraft>(() => {
-    const target = resolvePreset(loadLlmConfig() ?? emptyLlmConfig())
+    const target = resolveModel(loadLlmConfig() ?? emptyLlmConfig())
     return {
       baseUrl: target?.baseUrl ?? '',
       apiKey: target?.apiKey ?? '',
@@ -53,19 +55,15 @@ export function Onboarding(props: { onClose: () => void }) {
     setTestState({ phase: 'idle' })
   }
 
-  /** Persists the draft into the default preset: edits it in place if one
-   * already exists, otherwise creates a provider+preset and sets it as
+  /** Persists the draft into the default model: edits it in place if one
+   * already exists, otherwise creates a provider and model and sets it as
    * default. Mirrors tc-town's Onboarding.tsx saveLlmDraft. */
   function saveLlmDraft() {
     const cfg = loadLlmConfig() ?? emptyLlmConfig()
-    const providerId = ensureProvider(cfg, { baseUrl: llm.baseUrl, apiKey: llm.apiKey })
-    const existingDefault = cfg.presets.find((p) => p.id === cfg.defaultPresetId)
-    if (existingDefault) {
-      existingDefault.providerId = providerId
-      existingDefault.model = llm.model.trim()
-    } else {
-      cfg.defaultPresetId = ensurePreset(cfg, { providerId, model: llm.model.trim() })
-    }
+    const baseUrl = normalizeBaseUrl(llm.baseUrl)
+    const providerId = cfg.providers.find(p => p.baseUrl === baseUrl && p.apiKey === llm.apiKey)?.id ?? createProvider(cfg, baseUrl)
+    patchProvider(cfg, providerId, { baseUrl, apiKey: llm.apiKey, models: [...new Set([...(cfg.providers.find(p => p.id === providerId)?.models ?? []), llm.model.trim()])] })
+    setDefaultModel(cfg, { providerId, model: llm.model.trim() })
     saveLlmConfig(cfg)
   }
 
@@ -75,7 +73,6 @@ export function Onboarding(props: { onClose: () => void }) {
     // Tests the draft directly (before it's saved) so the user can verify a
     // connection before committing it.
     const target: ResolvedLlmTargetV1 = {
-      presetId: '',
       providerId: '',
       label: '',
       baseUrl: llm.baseUrl,

@@ -136,6 +136,7 @@ async function loadNarration(
     const blob = await synthesizeSpeech({
       connection: target.connection,
       model: target.model,
+      speed: target.speed,
       voice: target.voice ?? 'alloy',
       text: trimmed,
     })
@@ -147,7 +148,7 @@ async function loadNarration(
 
 const BASE_WIDTH = 1280
 
-export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: PresentPlayerProps) {
+export function PresentPlayer({ deck, onExit, autoPlay = true, modelRef }: PresentPlayerProps) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isPlaying, setIsPlaying] = useState(autoPlay)
   const [isLoading, setIsLoading] = useState(true)
@@ -327,7 +328,7 @@ export function PresentPlayer({ deck, onExit, autoPlay = true, presetId }: Prese
   // mid-presentation even if Settings is edited in another tab.
   const [ttsTarget] = useState<ResolvedNarrationTarget | null>(() => {
     const config = loadLlmConfig()
-    return config ? resolveNarrationTarget(config, presetId) : null
+    return resolveNarrationTarget(config, modelRef, deck.lang)
   })
 
   // Same "resolved once at mount" rationale as ttsTarget above — the

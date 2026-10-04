@@ -1,3 +1,4 @@
+import type { ModelRefV1 } from '@tik-choco/mistai/llm-config'
 // Canonical domain types for TC Presenter. This is the single source of
 // truth referenced by every wave (see PLAN.md's "インターフェース契約"):
 //   - Wave2 A (features/generate + lib/evaluator) implements GenerateDeckFn /
@@ -540,10 +541,9 @@ export type GenerateProgressCallback = (event: GenerateProgressEvent) => void
 export interface GenerateOptions {
   /** Output language for slide content (e.g. "en", "ja"). */
   language: string
-  /** tc-shared-llm-config-v1 preset id; "" / omitted = the config's defaultPresetId. */
-  presetId?: string
-  /** "api" (default) or "network" — forwarded to lib/llm.ts's requestChatCompletion. */
-  connection?: 'api' | 'network'
+  /** Model reference; omitted follows this task's saved model or the shared default. */
+  modelRef?: ModelRefV1 | null
+  task?: 'default' | 'vision' | 'orchestrator' | 'worker'
   audience?: string
   tone?: string
   /** Soft upper bound on total slide count (cover + one per script segment).
@@ -571,17 +571,13 @@ export interface GenerateOptions {
   scriptCheck?: boolean
   /** Whether evaluateDeck's vision-LLM design-compliance metric runs during
    * the refine loop, in addition to the text-based judges above. Requires
-   * `visionPresetId` (or the config's default preset) to point at a
+   * `visionRef` (or the config's default model) to point at a
    * vision-capable model; silently skipped (never throws) when unset, the
-   * preset can't render/respond, or the browser environment can't render
+   * model can't render/respond, or the browser environment can't render
    * slides offscreen — see lib/evaluator/visionJudge.ts. Default false. */
   useVisionJudge?: boolean
-  /** tc-shared-llm-config-v1 preset id for the vision judge specifically
-   * (e.g. an Ollama qwen2.5vl:7b preset) — falls back to `presetId` /
-   * the config's defaultPresetId when omitted, but that default preset is
-   * usually a text-only model, so setting this explicitly is recommended
-   * whenever `useVisionJudge` is on. */
-  visionPresetId?: string
+  /** Model reference; omitted uses the configured task or shared default. */
+  visionRef?: ModelRefV1 | null
   /** Prompt size profile for the slide-generation calls. 'full' (default)
    * embeds the complete style guide + all 12 block shapes; 'compact' embeds a
    * trimmed guide restricted to the 6 most common block kinds, sized for
@@ -595,8 +591,8 @@ export interface GenerateOptions {
    * single-call refine, which preserves the most cross-slide context and
    * suits large hosted models. */
   refineStrategy?: 'per_slide' | 'batch'
-  /** How the pipeline divides work between the orchestrator preset
-   * (`presetId`) and the worker preset (`workerPresetId`).
+  /** How the pipeline divides work between the orchestrator model
+   * (`modelRef`) and the worker model (`workerRef`).
    * 'script_first' (default): the orchestrator writes the FULL spoken
    * narration up front in one large call and workers only visualize each
    * segment — the historical shape.
@@ -605,19 +601,14 @@ export interface GenerateOptions {
    * segment PLAN (headings + terse briefs, no narration) and each fan-out
    * worker call writes its segment's narration AND slide in one request —
    * shifting the bulk of output tokens off the (typically expensive)
-   * orchestrator preset onto the cheaper worker preset. In this mode the
-   * LLM judge and batch refine also run on the worker preset, so the
-   * orchestrator preset is spent on the single plan call only;
+   * orchestrator model onto the cheaper worker model. In this mode the
+   * LLM judge and batch refine also run on the worker model, so the
+   * orchestrator model is spent on the single plan call only;
    * checkAndFixScript is skipped (its narration rules don't apply to
    * keyword briefs). */
   pipelineMode?: 'script_first' | 'plan_fanout'
-  /** Preset for the per-segment slide-generation "worker" calls (and the
-   * per-slide refine calls), when it should differ from the main `presetId`
-   * — the orchestrator/worker split: a strong model plans (script, batch
-   * refine, evaluation) via `presetId` while a cheaper/faster model
-   * mass-produces segment slides via this. Falls back to `presetId` (or the
-   * config default) when omitted. */
-  workerPresetId?: string
+  /** Optional worker ref; omitted uses the worker task model or shared default. */
+  workerRef?: ModelRefV1 | null
   /** How many per-segment slide-generation calls may run concurrently.
    * Default 1 (fully sequential, the historical behavior — also the safe
    * choice for local LLM servers, which typically process one request at a
@@ -745,16 +736,15 @@ export interface EvaluateDeckOptions {
    * ones. Default true. Rule-based-only evaluation is fully deterministic
    * and synchronous-fast, useful for editor live-feedback. */
   useLlmJudge?: boolean
-  presetId?: string
-  connection?: 'api' | 'network'
+  modelRef?: ModelRefV1 | null
+  task?: 'default' | 'vision' | 'orchestrator' | 'worker'
   /** Whether to render each slide to a PNG and score it with a vision LLM
    * (the 'vision_design_compliance' metric). Default false — this is
    * significantly more expensive than the text-only judge and requires a
-   * vision-capable preset. See GenerateOptions.useVisionJudge. */
+   * vision-capable model. See GenerateOptions.useVisionJudge. */
   useVisionJudge?: boolean
-  /** Preset id for the vision judge; falls back to `presetId` when omitted.
-   * See GenerateOptions.visionPresetId. */
-  visionPresetId?: string
+  /** Optional vision ref; omitted uses the vision task model or shared default. */
+  visionRef?: ModelRefV1 | null
   signal?: AbortSignal
 }
 
@@ -768,9 +758,8 @@ export interface PresentPlayerProps {
   onExit: () => void
   /** Start auto-playing (TTS + auto-advance) immediately on mount. Default true. */
   autoPlay?: boolean
-  /** tc-shared-llm-config-v1 preset id used for TTS voice resolution; "" /
-   * omitted falls back to the shared config's `tts` entry (lib/tts.ts). */
-  presetId?: string
+  /** Model reference; omitted uses the configured task or shared default. */
+  modelRef?: ModelRefV1
 }
 
 // ---------------------------------------------------------------------------

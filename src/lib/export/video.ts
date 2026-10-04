@@ -341,6 +341,7 @@ async function synthesizeSlideAudio(
     const blob = await synthesizeSpeech({
       connection: target.connection,
       model: target.model,
+      speed: target.speed,
       voice: target.voice ?? 'alloy',
       text: trimmed,
     })
@@ -472,7 +473,7 @@ async function exportViaMediaBunny(
     await audioCtx.resume().catch(() => undefined)
 
     const config = loadLlmConfig()
-    const target = config ? resolveNarrationTarget(config) : null
+    const target = resolveNarrationTarget(config, undefined, deck.lang)
 
     // Same prefs PresentPlayer's live caption overlay reads — see the
     // header comment above for the full rationale.
@@ -663,7 +664,7 @@ async function exportViaMediaRecorder(
     const destination = audioCtx.createMediaStreamDestination()
 
     const config = loadLlmConfig()
-    const target = config ? resolveNarrationTarget(config) : null
+    const target = resolveNarrationTarget(config, undefined, deck.lang)
 
     // Same prefs PresentPlayer's live caption overlay reads — off entirely
     // unless the user has turned captions on, and secondary/translated

@@ -147,13 +147,13 @@ async function runJob(job: GenerateJob, signal: AbortSignal): Promise<void> {
       const score = await evaluateDeck(stamped, {
         useLlmJudge: job.opts.useLlmJudge,
         useVisionJudge: job.opts.useVisionJudge,
-        visionPresetId: job.opts.visionPresetId,
-        // Same preset routing as generateDeck's in-pipeline evaluation:
-        // plan_fanout reserves the orchestrator preset for the plan call, so
-        // this final score runs on the worker preset there.
-        presetId:
-          job.opts.pipelineMode === 'plan_fanout' ? (job.opts.workerPresetId ?? job.opts.presetId) : job.opts.presetId,
-        connection: job.opts.connection,
+        visionRef: job.opts.visionRef,
+        task: job.opts.pipelineMode === 'plan_fanout' ? 'worker' : 'orchestrator',
+        // Same model routing as generateDeck's in-pipeline evaluation:
+        // plan_fanout reserves the orchestrator model for the plan call, so
+        // this final score runs on the worker model there.
+        modelRef:
+          job.opts.pipelineMode === 'plan_fanout' ? job.opts.workerRef : job.opts.modelRef,
       })
       patchJob(job.id, { score })
     } catch {

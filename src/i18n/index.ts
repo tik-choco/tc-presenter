@@ -6,14 +6,14 @@
 import en, { type TranslationKey } from './en'
 import ja from './ja'
 
-export type Locale = 'en' | 'ja'
+export type Locale = 'en' | 'ja' | 'zh-CN' | 'zh-TW'
 export type { TranslationKey }
 
 const STORAGE_KEY = 'tc-presenter-locale'
-const CATALOGS: Record<Locale, Partial<Record<TranslationKey, string>>> = { en, ja }
+const CATALOGS: Record<Locale, Partial<Record<TranslationKey, string>>> = { en, ja, 'zh-CN': {}, 'zh-TW': {} }
 
 function isLocale(value: string | null): value is Locale {
-  return value === 'en' || value === 'ja'
+  return value === 'en' || value === 'ja' || value === 'zh-CN' || value === 'zh-TW'
 }
 
 function getStoredLocale(): Locale {

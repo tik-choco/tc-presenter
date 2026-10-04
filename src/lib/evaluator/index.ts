@@ -47,7 +47,7 @@ export const evaluateDeck: EvaluateDeckFn = async (deck: Deck, opts?: EvaluateDe
   const rule = computeRuleMetrics(deck)
 
   const llm = useLlmJudge
-    ? await runLlmJudge(deck, { presetId: opts?.presetId, connection: opts?.connection, signal: opts?.signal })
+    ? await runLlmJudge(deck, { modelRef: opts?.modelRef, task: opts?.task, signal: opts?.signal })
     : null
 
   // Runs after the text judge rather than in parallel with it: both are
@@ -55,7 +55,7 @@ export const evaluateDeck: EvaluateDeckFn = async (deck: Deck, opts?: EvaluateDe
   // concurrent LLM calls bounded to one at a time, which matters for local
   // (Ollama/LM Studio) providers that only serve one request at a time.
   const vision = useVisionJudge
-    ? await runVisionJudge(deck, { presetId: opts?.visionPresetId || opts?.presetId, signal: opts?.signal })
+    ? await runVisionJudge(deck, { modelRef: opts?.visionRef, signal: opts?.signal })
     : null
 
   const metrics: MetricScore[] = []
