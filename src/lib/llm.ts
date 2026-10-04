@@ -29,20 +29,27 @@ export async function requestChatCompletion(messages: MultimodalChatMessage[], o
   try {
     let content: string
     if (isNetworkProviderBaseUrl(target.baseUrl)) {
-      // The tunnel preserves images and per-task effort. The plain chat wire
-      // format has no reasoning_effort field.
-      const pending = rooms.requestRoomOpenAi(roomIdFromBaseUrl(target.baseUrl), {
-        path: '/chat/completions', method: 'POST', contentType: 'application/json',
-        body: JSON.stringify({ model: target.model, messages, stream: false, reasoning_effort: task.reasoningEffort }),
-      })
-      const response = await new Promise<Awaited<typeof pending>>((resolve, reject) => {
+      const roomId = roomIdFromBaseUrl(target.baseUrl)
+      const hasImages = messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === 'image_url'))
+      // Only image content needs the tunnel; text chat streams over llm_request.
+      const pending = hasImages
+        ? rooms.requestRoomOpenAi(roomId, {
+          path: '/chat/completions', method: 'POST', contentType: 'application/json',
+          body: JSON.stringify({ model: target.model, messages, stream: false, reasoning_effort: task.reasoningEffort }),
+        }).then(response => {
+          if (response.status < 200 || response.status >= 300) throw new MistaiError('UPSTREAM_HTTP_ERROR', response.body)
+          return JSON.parse(response.body).choices?.[0]?.message?.content ?? ''
+        })
+        : rooms.requestRoomChat(roomId, messages.map(message => ({
+          ...message,
+          content: typeof message.content === 'string' ? message.content : message.content.map(part => part.type === 'text' ? part.text : '').join(''),
+        })), { model: target.model, reasoningEffort: task.reasoningEffort, onDelta: options.onDelta })
+      content = await new Promise<string>((resolve, reject) => {
         const abort = () => reject(signal.reason)
         signal.addEventListener('abort', abort, { once: true })
         pending.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
       })
-      if (response.status < 200 || response.status >= 300) throw new MistaiError('UPSTREAM_HTTP_ERROR', response.body)
-      content = JSON.parse(response.body).choices?.[0]?.message?.content ?? ''
-      options.onDelta?.(content, content)
+      if (hasImages) options.onDelta?.(content, content)
     } else {
       let full = ''
       content = await streamChatCompletion({ ...target, reasoningEffort: task.reasoningEffort }, messages as ChatMessage[],
