@@ -156,3 +156,13 @@
   color: var(--text);
   background: var(--page);
 }
+
+/* Shared AI controls inherit the presenter's light/dark theme, including portals. */
+:root {
+  --mistai-surface: var(--surface); --mistai-surface-2: var(--surface-2);
+  --mistai-border: var(--border); --mistai-border-strong: var(--border-strong);
+  --mistai-text: var(--text); --mistai-text-muted: var(--text-muted); --mistai-text-strong: var(--text-strong);
+  --mistai-primary: var(--primary); --mistai-primary-soft: var(--primary-soft);
+  --mistai-focus: var(--focus); --mistai-focus-ring: var(--focus-ring);
+  --mistai-danger-text: var(--danger-text); --mistai-font-family: var(--sans);
+}

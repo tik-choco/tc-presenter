@@ -1,13 +1,7 @@
-// TTS entry point for tc-presenter's auto-narration (features/present plays
-// each slide's speakerNotes through this). Direct-HTTP OpenAI-compatible
-// POST {baseUrl}/audio/speech only — this is the "/audio/speech part" of
-// tc-translate's src/lib/voice.ts (STT/transcription is out of scope here,
-// tc-presenter never needs to listen to the user). AI Network TTS (P2P) is
-// available separately via lib/aiNetwork.ts's requestNetworkTts when a
-// feature wants to route through a room instead of a direct endpoint.
-
+// Narration transport: HTTP speech or a mistai room selected by the voice ref.
+import { rooms } from './aiNetwork'
 import { MistaiError } from '@tik-choco/mistai'
-import { resolveVoice, type SharedLlmConfigV1 } from './llmConfig'
+import { isNetworkProviderBaseUrl, roomIdFromBaseUrl, networkVoiceModelParam } from './llmConfig'
 
 export type VoiceConnection = {
   baseUrl: string
@@ -19,16 +13,6 @@ export type VoiceConnection = {
  * speaker notes can legitimately take a while, so this is generous relative
  * to lib/llm.ts's DEFAULT_LLM_TIMEOUT_MS. */
 export const DEFAULT_TTS_TIMEOUT_MS = 120_000
-
-// TTS connection info (baseUrl/apiKey) comes from the shared llm config's
-// `tts` entry - explicit if set, otherwise the default preset's provider
-// (see resolveVoice in lib/llmConfig.ts). Callers resolve through this
-// helper rather than reading the shared config directly so a missing
-// provider degrades to an empty (falsy) connection instead of throwing.
-export function resolveTtsConnection(config: SharedLlmConfigV1): VoiceConnection {
-  const resolved = resolveVoice(config, 'tts')
-  return { baseUrl: resolved?.baseUrl ?? '', apiKey: resolved?.apiKey ?? '' }
-}
 
 function authHeaders(apiKey: string): HeadersInit {
   return apiKey.trim() ? { Authorization: `Bearer ${apiKey}` } : {}
@@ -53,12 +37,16 @@ export async function synthesizeSpeech(params: {
   model: string
   voice: string
   text: string
+  speed?: number
   signal?: AbortSignal
 }): Promise<Blob> {
   if (!params.connection.baseUrl.trim()) {
     throw new MistaiError('ENDPOINT_NOT_CONFIGURED', 'No TTS provider is configured yet (see Settings).')
   }
 
+  if (isNetworkProviderBaseUrl(params.connection.baseUrl)) {
+    return rooms.requestRoomTts(roomIdFromBaseUrl(params.connection.baseUrl), { text: params.text, model: networkVoiceModelParam(params.model), voice: params.voice || undefined })
+  }
   const response = await fetch(`${params.connection.baseUrl}/audio/speech`, {
     method: 'POST',
     headers: {
@@ -71,6 +59,7 @@ export async function synthesizeSpeech(params: {
       input: params.text,
       voice: params.voice.trim() || 'alloy',
       response_format: 'mp3',
+      ...(params.speed !== undefined ? { speed: params.speed } : {}),
     }),
   })
 

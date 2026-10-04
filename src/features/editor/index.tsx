@@ -1,3 +1,7 @@
+import type { ModelRefV1 } from '@tik-choco/mistai/llm-config'
+import { TaskModelOverride } from '../../components/TaskModelOverride'
+import { aiText } from '../../i18n/ai'
+import { emptyLlmConfig } from '../../lib/llmConfig'
 // Wave2 C owns this feature: deck/slide editor UI (reorder, edit bullets,
 // pick a generated deck to revise, trigger features/generate for new decks).
 //
@@ -38,7 +42,7 @@ import { deleteImageAsset, getCachedImageAsset, getImageAsset, putImageAsset } f
 import { describeImage } from '../../lib/imageDescribe'
 import SlideView from '../../components/slides/SlideView'
 import { DECK_THEME_PRESETS } from './deckThemePresets'
-import { loadGenerateRolePrefs, loadVisionPresetId } from '../settings/localPrefs'
+import { loadGenerateRolePrefs, loadVisionRef } from '../settings/localPrefs'
 import {
   DEFAULT_MAX_REFINE_ITERATIONS,
   DEFAULT_QUALITY_THRESHOLD,
@@ -366,8 +370,8 @@ function ImageBlocksField({ slide, deckLang, onChange, onDescribed }: ImageBlock
       onChange({ blocks: [...base, newBlock] })
 
       setDescribingIds((prev) => new Set(prev).add(assetId))
-      const visionPresetId = loadVisionPresetId()
-      describeImage(resized, { lang: deckLang, presetId: visionPresetId || undefined })
+      const visionRef = loadVisionRef()
+      describeImage(resized, { lang: deckLang, modelRef: visionRef || undefined })
         .then((description) => {
           if (description) onDescribed(assetId, description)
         })
@@ -619,11 +623,11 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
   // GenerateOptions.scriptCheck: false to skip the check (and its possible
   // one-shot LLM repair call) entirely.
   const [scriptCheck, setScriptCheck] = useState(true)
-  // Vision judging needs a vision-capable preset configured once in Settings
+  // Vision judging needs a vision-capable model configured once in Settings
   // (features/settings's "Vision judge" section) — when one is set, default
   // this on so generation "just works" without extra per-run configuration,
   // matching the task brief's "configuring the LLM alone is enough" goal.
-  const [useVisionJudge, setUseVisionJudge] = useState(() => Boolean(loadVisionPresetId()))
+  const [useVisionJudge, setUseVisionJudge] = useState(() => Boolean(loadVisionRef()))
   const [threshold, setThreshold] = useState(String(DEFAULT_QUALITY_THRESHOLD))
   const [maxRefine, setMaxRefine] = useState(String(DEFAULT_MAX_REFINE_ITERATIONS))
   // Orchestrator/worker role defaults set once in Settings (localPrefs.ts's
@@ -633,14 +637,12 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
   // picker remains a per-run override; changing it here never writes back to
   // the saved prefs (Settings stays the single place that edits defaults).
   const [roleDefaults] = useState(loadGenerateRolePrefs)
-  const [presetId, setPresetId] = useState(roleDefaults.orchestratorPresetId)
-  const [useNetwork, setUseNetwork] = useState(false)
+  const [modelRef, setModelRef] = useState<ModelRefV1 | null | undefined>(roleDefaults.orchestratorRef)
   const [compactPrompt, setCompactPrompt] = useState(false)
   const [batchRefine, setBatchRefine] = useState(false)
-  // Orchestrator/worker split (types.ts GenerateOptions.workerPresetId doc):
-  // '' = same preset as the main one; concurrency stays at 1 (sequential)
-  // unless raised — local LLM servers are single-request anyway.
-  const [workerPresetId, setWorkerPresetId] = useState(roleDefaults.workerPresetId)
+  // Orchestrator/worker split (types.ts GenerateOptions.workerRef doc):
+  // Unassigned workers use the shared default. Concurrency starts at one.
+  const [workerRef, setWorkerRef] = useState<ModelRefV1 | null | undefined>(roleDefaults.workerRef)
   const [workerConcurrency, setWorkerConcurrency] = useState(String(roleDefaults.workerConcurrency))
 
   const [llmConfig, setLlmConfig] = useState<SharedLlmConfigV1 | null>(() => loadLlmConfig())
@@ -759,7 +761,7 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
     const maxSlidesNum = slideCountMode === 'cap' && maxSlides.trim() ? Number(maxSlides.trim()) : undefined
     const thresholdNum = Number(threshold.trim())
     const maxRefineNum = Number(maxRefine.trim())
-    const visionPresetId = loadVisionPresetId()
+    const visionRef = loadVisionRef()
 
     const opts: GenerateOptions = {
       language,
@@ -770,11 +772,11 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
     if (maxSlidesNum !== undefined && Number.isFinite(maxSlidesNum) && maxSlidesNum > 0) opts.maxSlides = maxSlidesNum
     if (audience.trim()) opts.audience = audience.trim()
     if (tone.trim()) opts.tone = tone.trim()
-    if (presetId) opts.presetId = presetId
-    if (useNetwork) opts.connection = 'network'
+    if (modelRef !== undefined) opts.modelRef = modelRef
+
     if (useVisionJudge) {
       opts.useVisionJudge = true
-      if (visionPresetId) opts.visionPresetId = visionPresetId
+      if (visionRef) opts.visionRef = visionRef
     }
     if (compactPrompt) opts.promptProfile = 'compact'
     if (batchRefine) opts.refineStrategy = 'batch'
@@ -788,7 +790,7 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
     // non-UI callers), while the prefs default is 'plan_fanout' — so an
     // unset field would silently flip modes.
     opts.pipelineMode = roleDefaults.pipelineMode
-    if (workerPresetId) opts.workerPresetId = workerPresetId
+    if (workerRef !== undefined) opts.workerRef = workerRef
     const workerConcurrencyNum = Number(workerConcurrency.trim())
     if (Number.isFinite(workerConcurrencyNum) && workerConcurrencyNum > 1) {
       opts.workerConcurrency = Math.trunc(workerConcurrencyNum)
@@ -1053,19 +1055,10 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
                 ))}
               </select>
             </div>
-            {llmConfig && llmConfig.presets.length > 0 && (
-              <div class="edt-field">
-                <label>{t('editor.create.preset')}</label>
-                <select value={presetId} onChange={(e) => setPresetId(e.currentTarget.value)}>
-                  <option value="">{t('editor.create.presetDefault')}</option>
-                  {llmConfig.presets.map((p) => (
-                    <option value={p.id} key={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div class="edt-field">
+              <label>{aiText('orchestrator')}</label>
+              <TaskModelOverride config={llmConfig ?? emptyLlmConfig()} value={modelRef} onChange={setModelRef} task="orchestrator" />
+            </div>
           </div>
 
           <button type="button" class="edt-advanced-toggle" onClick={() => setAdvancedOpen((v) => !v)}>
@@ -1116,11 +1109,7 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
                   checked={useVisionJudge}
                   onChange={(e) => setUseVisionJudge(e.currentTarget.checked)}
                 />
-                <span>{t('editor.create.useVisionJudge')}</span>
-              </label>
-              <label class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
-                <input type="checkbox" checked={useNetwork} onChange={(e) => setUseNetwork(e.currentTarget.checked)} />
-                <span>{t('editor.create.useNetwork')}</span>
+                <span>{aiText('visionHint')}</span>
               </label>
               <label class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
                 <input
@@ -1134,19 +1123,10 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
                 <input type="checkbox" checked={batchRefine} onChange={(e) => setBatchRefine(e.currentTarget.checked)} />
                 <span>{t('editor.create.refineBatch')}</span>
               </label>
-              {llmConfig && llmConfig.presets.length > 0 && (
-                <div class="edt-field">
-                  <label>{t('editor.create.workerPreset')}</label>
-                  <select value={workerPresetId} onChange={(e) => setWorkerPresetId(e.currentTarget.value)}>
-                    <option value="">{t('editor.create.workerPresetDefault')}</option>
-                    {llmConfig.presets.map((p) => (
-                      <option value={p.id} key={p.id}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              <div class="edt-field">
+                <label>{aiText('worker')}</label>
+                <TaskModelOverride config={llmConfig ?? emptyLlmConfig()} value={workerRef} onChange={setWorkerRef} task="worker" />
+              </div>
               <div class="edt-field">
                 <label>{t('editor.create.workerConcurrency')}</label>
                 <input

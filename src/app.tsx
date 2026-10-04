@@ -1,3 +1,6 @@
+import { useLlmConfig, useRoomProviders } from '@tik-choco/mistai/preact'
+import { useAiSettings } from './lib/aiSettings'
+import { rooms } from './lib/aiNetwork'
 import { useEffect, useState } from 'preact/hooks'
 import { lazy, Suspense } from 'preact/compat'
 import { Moon, Sun } from 'lucide-preact'
@@ -43,6 +46,9 @@ const SettingsTab = lazy(() => import('./features/settings')) as ComponentType<S
 export function App() {
   const { theme, toggleTheme } = useTheme()
   const [tab, setTab] = useState<TabId>('sources')
+  const { config } = useLlmConfig()
+  const aiSettings = useAiSettings()
+  useRoomProviders({ config, roomProvide: aiSettings.roomProvide, consumers: rooms, taskRefs: Object.values(aiSettings.tasks).map(task => task.ref), settingsOpen: tab === 'settings' })
   const [sources, setSources] = useState<SourceMaterial[]>([])
   const [deck, setDeck] = useState<Deck | null>(null)
   // Bumped whenever a navigate event asks Present to auto-start (see below);

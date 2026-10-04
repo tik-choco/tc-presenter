@@ -10,12 +10,12 @@
 //
 // 'plan_fanout' (the settings UI's default, modeled on ../tc-translate's
 // planTranslationFanOut -> per-language-worker split): the orchestrator
-// preset makes ONE compact plan call (generatePlan — headings + terse
+// model makes ONE compact plan call (generatePlan — headings + terse
 // briefs, no narration), then the fan-out workers each write their segment's
 // narration AND slide in one call (generateAuthoredSegment) on the worker
-// preset — so an expensive orchestrator preset's token spend is limited to
-// the plan call while a cheaper worker preset carries the bulk of output
-// tokens (evaluation and batch refine also run on the worker preset there).
+// model — so an expensive orchestrator model's token spend is limited to
+// the plan call while a cheaper worker model carries the bulk of output
+// tokens (evaluation and batch refine also run on the worker model there).
 //
 // Pure service module (no Preact) so it can be unit tested and reused
 // headlessly (e.g. by the editor tab's "generate" action) without pulling in
@@ -69,13 +69,9 @@ const REFINE_TIMEOUT_MS = 180_000
 const PLAN_TIMEOUT_MS = 60_000
 const SEGMENT_AUTHOR_TIMEOUT_MS = 90_000
 
-// Fixed low temperature for every generation/refine call in this pipeline —
-// JSON-shape stability matters more than creative variance here, mirroring
-// lib/evaluator/llmJudge.ts's own 0.2 for the same reason.
-const GENERATION_TEMPERATURE = 0.3
 
 function chatOpts(opts: GenerateOptions, timeoutMs: number) {
-  return { presetId: opts.presetId, connection: opts.connection, signal: opts.signal, timeoutMs, temperature: GENERATION_TEMPERATURE }
+  return { modelRef: opts.modelRef, task: opts.task ?? 'orchestrator', signal: opts.signal, timeoutMs }
 }
 
 async function generateScript(sources: SourceMaterial[], opts: GenerateOptions): Promise<Script> {
@@ -122,7 +118,7 @@ async function generatePlan(sources: SourceMaterial[], opts: GenerateOptions): P
  * applies around the one await so a cancellation mid-repair-call surfaces as
  * an abort rather than silently finishing the repair. Skipped entirely when
  * `opts.scriptCheck` is false or the script already has no issues. Uses
- * `opts` (the orchestrator preset), not a worker preset — like the batch
+ * `opts` (the orchestrator model), not a worker model — like the batch
  * refine call, fixing the script is an orchestrator-level responsibility. */
 async function checkAndFixScript(script: Script, opts: GenerateOptions, onProgress?: GenerateProgressCallback): Promise<Script> {
   if (opts.scriptCheck === false) return script
@@ -564,24 +560,23 @@ export const generateDeck: GenerateDeckFn = async (sources, opts, onProgress) =>
   const useLlmJudge = opts.useLlmJudge ?? true
   const useVisionJudge = opts.useVisionJudge ?? false
 
-  // Orchestrator/worker preset split (types.ts's workerPresetId doc): the
-  // main presetId plans; the worker preset — when set — mass-produces the
+  // Orchestrator/worker model split (types.ts's workerRef doc): the
+  // main modelRef plans; the worker model — when set — mass-produces the
   // per-segment slides and the small per-slide refine calls.
-  const workerOpts: GenerateOptions = opts.workerPresetId ? { ...opts, presetId: opts.workerPresetId } : opts
+  const workerOpts: GenerateOptions = { ...opts, modelRef: opts.workerRef, task: 'worker' }
   const pipelineMode = opts.pipelineMode ?? 'script_first'
-  // plan_fanout reserves the orchestrator preset for the single plan call
+  // plan_fanout reserves the orchestrator model for the single plan call
   // (types.ts's pipelineMode doc — the whole point is keeping the expensive
-  // planning preset's token spend minimal), so the LLM judge and the
-  // deck-level batch refine run on the worker preset there. script_first
-  // keeps them on the orchestrator preset, the historical behavior.
+  // planning model's token spend minimal), so the LLM judge and the
+  // deck-level batch refine run on the worker model there. script_first
+  // keeps them on the orchestrator model, the historical behavior.
   const heavyOpts = pipelineMode === 'plan_fanout' ? workerOpts : opts
 
   const evalOpts = {
     useLlmJudge,
     useVisionJudge,
-    visionPresetId: opts.visionPresetId,
-    presetId: heavyOpts.presetId,
-    connection: opts.connection,
+    visionRef: opts.visionRef,
+    modelRef: heavyOpts.modelRef, task: heavyOpts.task ?? 'orchestrator',
     signal: opts.signal,
   }
 

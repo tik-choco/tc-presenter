@@ -242,3 +242,11 @@ a {
 .feature-placeholder strong {
   color: var(--text-strong);
 }
+
+@media (max-width: 480px) {
+  .app-header { flex-wrap: wrap; gap: 8px; padding: 10px 16px; }
+  .app-title { flex: 1; }
+  .theme-toggle { flex-shrink: 0; }
+  .tab-bar { order: 3; flex-basis: 100%; }
+  .tab-bar__item { flex: 1; white-space: nowrap; padding: 8px; }
+}

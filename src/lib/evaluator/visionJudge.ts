@@ -1,3 +1,4 @@
+import type { ModelRefV1 } from '@tik-choco/mistai/llm-config'
 // The vision-LLM half of the evaluator: renders a sample of slides to PNGs
 // (visionRender.tsx) and asks a vision-capable model (e.g. Ollama's
 // qwen2.5vl:7b) to score each one against design-spec.md's visual bar —
@@ -41,8 +42,8 @@ export interface VisionJudgeResult {
 }
 
 export interface RunVisionJudgeOptions {
-  /** Preset id for the vision-capable model. */
-  presetId?: string
+  /** Optional ref for the vision task. */
+  modelRef?: ModelRefV1 | null
   signal?: AbortSignal
 }
 
@@ -117,12 +118,8 @@ export async function runVisionJudge(deck: Deck, opts: RunVisionJudgeOptions): P
   let raw: string
   try {
     raw = await requestChatCompletion(messages, {
-      presetId: opts.presetId,
-      // Images can't travel over the AI Network's text-only protocol — see
-      // lib/llm.ts's requestChatCompletion network-branch guard.
-      connection: 'api',
+      modelRef: opts.modelRef, task: 'vision',
       signal: opts.signal,
-      temperature: 0.2,
       timeoutMs: VISION_TIMEOUT_MS,
     })
   } catch {

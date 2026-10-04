@@ -1,3 +1,4 @@
+import type { ModelRefV1 } from '@tik-choco/mistai/llm-config'
 // The LLM-judged half of the 15 metrics (single_message_per_slide,
 // narrative_flow, title_specificity, jargon_annotation, speaker_notes_quality,
 // visual_text_redundancy — plus the LLM-side component of the 3 hybrid rule
@@ -43,8 +44,8 @@ export interface LlmJudgeResult {
 }
 
 export interface RunLlmJudgeOptions {
-  presetId?: string
-  connection?: 'api' | 'network'
+  modelRef?: ModelRefV1 | null
+  task?: 'default' | 'vision' | 'orchestrator' | 'worker'
   signal?: AbortSignal
 }
 
@@ -143,10 +144,8 @@ export async function runLlmJudge(deck: Deck, opts: RunLlmJudgeOptions): Promise
   let raw: string
   try {
     raw = await requestChatCompletion(messages, {
-      presetId: opts.presetId,
-      connection: opts.connection,
+      modelRef: opts.modelRef, task: opts.task ?? 'default',
       signal: opts.signal,
-      temperature: 0.2,
       timeoutMs: JUDGE_TIMEOUT_MS,
     })
   } catch {

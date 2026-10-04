@@ -146,7 +146,7 @@ export async function translateCaption(opts: {
         },
         { role: 'user', content: narration },
       ],
-      { presetId: '', temperature: 0.2, signal },
+      { task: 'default', signal },
     )
     const text = content.trim()
     setCachedCaptionTranslation(deckId, slideId, lang, narration, text)
