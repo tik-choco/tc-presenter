@@ -5,7 +5,6 @@ import { getLocale, setLocale, subscribeLocale, type Locale } from '../../i18n'
 import { aiText } from '../../i18n/ai'
 import { requestOnboarding } from '../../lib/onboarding'
 import { clampWorkerConcurrency, loadGenerateRolePrefs, saveGenerateRolePrefs } from './localPrefs'
-import { emptyLlmConfig, loadLlmConfig, saveLlmConfig } from '../../lib/llmConfig'
 import '@tik-choco/mistai/ui.css'
 import './settings.css'
 export default function SettingsTab() {
@@ -32,13 +31,6 @@ export default function SettingsTab() {
       <label>{aiText('concurrency')}<input type="number" min={1} max={8} value={prefs.workerConcurrency} onChange={event => {
         const next = { ...prefs, workerConcurrency: clampWorkerConcurrency(Number(event.currentTarget.value)) }
         setPrefs(next); saveGenerateRolePrefs(next)
-      }} /></label>
-      <label>{aiText('speed')}<input type="number" min={0.25} max={4} step={0.05} defaultValue={loadLlmConfig()?.tts?.speed ?? 1} onChange={event => {
-        const speed = Number(event.currentTarget.value)
-        if (!Number.isFinite(speed) || speed < 0.25 || speed > 4) return
-        const config = loadLlmConfig() ?? emptyLlmConfig()
-        config.tts = { model: '', ...config.tts, speed }
-        saveLlmConfig(config)
       }} /></label>
     </div> : null}
   /></div>
