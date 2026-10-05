@@ -1,7 +1,9 @@
+import { Switch } from '@tik-choco/mistai/preact'
 import type { ModelRefV1 } from '@tik-choco/mistai/llm-config'
 import { TaskModelOverride } from '../../components/TaskModelOverride'
 import { aiText } from '../../i18n/ai'
 import { emptyLlmConfig } from '../../lib/llmConfig'
+import '@tik-choco/mistai/ui.css'
 // Wave2 C owns this feature: deck/slide editor UI (reorder, edit bullets,
 // pick a generated deck to revise, trigger features/generate for new decks).
 //
@@ -1095,34 +1097,26 @@ export default function EditorTab({ deck, onDeckChange, sources }: EditorTabProp
                   onChange={(e) => setMaxRefine(e.currentTarget.value)}
                 />
               </div>
-              <label class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
-                <input type="checkbox" checked={useLlmJudge} onChange={(e) => setUseLlmJudge(e.currentTarget.checked)} />
+              <div class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+                <Switch checked={useLlmJudge} label={t('editor.create.useLlmJudge')} onChange={setUseLlmJudge} />
                 <span>{t('editor.create.useLlmJudge')}</span>
-              </label>
-              <label class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
-                <input type="checkbox" checked={scriptCheck} onChange={(e) => setScriptCheck(e.currentTarget.checked)} />
+              </div>
+              <div class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+                <Switch checked={scriptCheck} label={t('editor.create.scriptCheck')} onChange={setScriptCheck} />
                 <span>{t('editor.create.scriptCheck')}</span>
-              </label>
-              <label class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
-                <input
-                  type="checkbox"
-                  checked={useVisionJudge}
-                  onChange={(e) => setUseVisionJudge(e.currentTarget.checked)}
-                />
+              </div>
+              <div class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+                <Switch checked={useVisionJudge} label={aiText('visionHint')} onChange={setUseVisionJudge} />
                 <span>{aiText('visionHint')}</span>
-              </label>
-              <label class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
-                <input
-                  type="checkbox"
-                  checked={compactPrompt}
-                  onChange={(e) => setCompactPrompt(e.currentTarget.checked)}
-                />
+              </div>
+              <div class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+                <Switch checked={compactPrompt} label={t('editor.create.promptProfileCompact')} onChange={setCompactPrompt} />
                 <span>{t('editor.create.promptProfileCompact')}</span>
-              </label>
-              <label class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
-                <input type="checkbox" checked={batchRefine} onChange={(e) => setBatchRefine(e.currentTarget.checked)} />
+              </div>
+              <div class="edt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+                <Switch checked={batchRefine} label={t('editor.create.refineBatch')} onChange={setBatchRefine} />
                 <span>{t('editor.create.refineBatch')}</span>
-              </label>
+              </div>
               <div class="edt-field">
                 <label>{aiText('worker')}</label>
                 <TaskModelOverride config={llmConfig ?? emptyLlmConfig()} value={workerRef} onChange={setWorkerRef} task="worker" />

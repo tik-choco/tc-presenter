@@ -13,6 +13,8 @@
 // first mount and keeping sourceStore.ts in sync on every change.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { JSX } from 'preact'
+import { Switch } from '@tik-choco/mistai/preact'
+import '@tik-choco/mistai/ui.css'
 import './sources.css'
 import { t } from '../../i18n'
 import { readShared, subscribeShared, type SharedRecord } from '../../lib/sharedBus'
@@ -249,8 +251,7 @@ function GlobalArticlesOptIn({ onIngest }: GlobalArticlesOptInProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled])
 
-  function toggle() {
-    const next = !enabled
+  function toggle(next: boolean) {
     setEnabled(next)
     saveGlobalArticlesOptIn(next)
   }
@@ -261,10 +262,10 @@ function GlobalArticlesOptIn({ onIngest }: GlobalArticlesOptInProps) {
         <span class="src-panel__title">{t('sources.globalFeed.title')}</span>
       </div>
       <p class="src-panel__hint">{t('sources.globalFeed.description')}</p>
-      <label class="src-toggle-row">
-        <input type="checkbox" checked={enabled} onChange={toggle} />
+      <div class="src-toggle-row">
+        <Switch checked={enabled} onChange={toggle} label={t('sources.globalFeed.toggle')} />
         <span>{t('sources.globalFeed.toggle')}</span>
-      </label>
+      </div>
       {enabled && (
         <>
           <p class="src-note">{t('sources.globalFeed.experimentalNote')}</p>

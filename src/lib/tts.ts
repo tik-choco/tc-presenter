@@ -1,7 +1,7 @@
 // Narration transport: HTTP speech or a mistai room selected by the voice ref.
 import { rooms } from './aiNetwork'
-import { MistaiError } from '@tik-choco/mistai'
-import { isNetworkProviderBaseUrl, roomIdFromBaseUrl, networkVoiceModelParam } from './llmConfig'
+import { MistaiError, isTtsSpeed, isTtsResponseFormat } from '@tik-choco/mistai'
+import { isNetworkProviderBaseUrl, roomIdFromBaseUrl, networkVoiceModelParam, loadLlmConfig, resolveVoice } from './llmConfig'
 
 export type VoiceConnection = {
   baseUrl: string
@@ -38,6 +38,7 @@ export async function synthesizeSpeech(params: {
   voice: string
   text: string
   speed?: number
+  responseFormat?: string
   signal?: AbortSignal
 }): Promise<Blob> {
   if (!params.connection.baseUrl.trim()) {
@@ -45,8 +46,13 @@ export async function synthesizeSpeech(params: {
   }
 
   if (isNetworkProviderBaseUrl(params.connection.baseUrl)) {
-    return rooms.requestRoomTts(roomIdFromBaseUrl(params.connection.baseUrl), { text: params.text, model: networkVoiceModelParam(params.model), voice: params.voice || undefined })
+    return rooms.requestRoomTts(roomIdFromBaseUrl(params.connection.baseUrl), { text: params.text, model: networkVoiceModelParam(params.model), voice: params.voice || undefined,
+      ...(params.speed !== undefined ? { speed: params.speed } : {}),
+      ...(params.responseFormat !== undefined ? { responseFormat: params.responseFormat } : {}),
+    })
   }
+  const config = loadLlmConfig()
+  const speed = params.speed ?? (config ? resolveVoice(config, 'tts')?.speed : undefined)
   const response = await fetch(`${params.connection.baseUrl}/audio/speech`, {
     method: 'POST',
     headers: {
@@ -58,8 +64,8 @@ export async function synthesizeSpeech(params: {
       model: params.model.trim(),
       input: params.text,
       voice: params.voice.trim() || 'alloy',
-      response_format: 'mp3',
-      ...(params.speed !== undefined ? { speed: params.speed } : {}),
+      ...(isTtsResponseFormat(params.responseFormat) ? { response_format: params.responseFormat } : {}),
+      ...(isTtsSpeed(speed) ? { speed } : {}),
     }),
   })
 
