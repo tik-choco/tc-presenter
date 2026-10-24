@@ -1,6 +1,6 @@
 // The article reader and mistai share one physical MistNode. This module
 // fans out the wrapper's single event handler; mistai owns AI room handles.
-import { MistNode, EVENT_RAW, storage_get, DELIVERY_RELIABLE } from '../vendor/mistlib/wrappers/web/index.js'
+import { MistNode, EVENT_RAW, storage_get, DELIVERY_RELIABLE } from '@tik-choco/mistlib-web'
 import { safeSetItem } from './safeStorage'
 import { mistSignalingConfig } from './mistSignaling'
 

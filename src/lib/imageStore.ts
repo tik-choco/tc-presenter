@@ -38,7 +38,7 @@
 // null/no-op rather than crashing the caller.
 
 import { getNode, storage_get } from './mistNode'
-import { storage_add, storage_add_pinned } from '../vendor/mistlib/wrappers/web/index.js'
+import { storage_add, storage_add_pinned } from '@tik-choco/mistlib-web'
 import type { Deck } from '../types'
 
 const DB_NAME = 'tc-presenter-images'

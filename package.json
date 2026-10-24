@@ -4,18 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "predev": "node scripts/fetch-mistlib.mjs",
     "dev": "vite --host 0.0.0.0",
-    "prebuild": "node scripts/fetch-mistlib.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit",
-    "fetch-mistlib": "node scripts/fetch-mistlib.mjs"
+    "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
     "@pixiv/three-vrm": "^3.4.2",
     "@tik-choco/mistai": "github:tik-choco-lab/mistai",
     "@tik-choco/mistlib": "0.6.6",
+    "@tik-choco/mistlib-web": "0.1.0",
     "html-to-image": "^1.11.13",
     "jspdf": "^4.2.1",
     "lucide-preact": "^1.16.0",

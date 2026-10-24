@@ -27,7 +27,7 @@
 // failed checkpoint write must never break the generation it's protecting.
 
 import { getNode } from './mistNode'
-import { storage_kv_delete, storage_kv_get, storage_kv_set } from '../vendor/mistlib/wrappers/web/index.js'
+import { storage_kv_delete, storage_kv_get, storage_kv_set } from '@tik-choco/mistlib-web'
 import { safeSetItem } from './safeStorage'
 import {
   MAX_SCRIPT_SEGMENTS,

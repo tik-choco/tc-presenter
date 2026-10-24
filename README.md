@@ -18,7 +18,7 @@ npm run build    # tsc -b && vite build
 npm run typecheck # tsc -b --noEmit only
 ```
 
-`predev`/`prebuild` run `scripts/fetch-mistlib.mjs` automatically, which refreshes the vendored `src/vendor/mistlib` build if `MISTLIB_EXAMPLES_REPO`/`MISTLIB_EXAMPLES_REF` are set in your environment (see `.env.example`). If unset, the committed vendored build is used as-is — no network access required to run the app.
+The mistlib engine (`@tik-choco/mistlib`) and JS wrapper (`@tik-choco/mistlib-web`) come from npm. For local engine development, see `MISTLIB_LOCAL` in `.env.example`.
 
 The app works with no LLM configured: Sources/Editor/Present all render, and deck generation simply reports a "no provider configured" error until you add one in Settings.
 
