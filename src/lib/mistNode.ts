@@ -1,6 +1,6 @@
 // The article reader and mistai share one physical MistNode. This module
 // fans out the wrapper's single event handler; mistai owns AI room handles.
-import { MistNode, EVENT_RAW, storage_get, DELIVERY_RELIABLE } from '@tik-choco/mistlib-web'
+import { MistNode, EVENT_RAW, storage_get, DELIVERY_RELIABLE, type DeliveryMethod } from '@tik-choco/mistlib-web'
 import { safeSetItem } from './safeStorage'
 import { mistSignalingConfig } from './mistSignaling'
 
@@ -82,7 +82,7 @@ export class SharedMistNode {
   joinRoom(roomId: string): Promise<void> { return this.joinRoomAsync(roomId) }
   async joinRoomAsync(roomId: string): Promise<void> { await this.realNode?.joinRoomAsync(roomId) }
   leaveRoom(roomId?: string): void { if (roomId) this.realNode?.leaveRoom(roomId) }
-  sendMessage(toId: string | null | undefined, payload: Uint8Array, delivery?: number, roomId?: string): void {
+  sendMessage(toId: string | null | undefined, payload: Uint8Array, delivery?: DeliveryMethod, roomId?: string): void {
     this.realNode?.sendMessage(toId, payload, delivery, roomId)
   }
 }
